@@ -142,6 +142,7 @@ from app.modules.module8_ai.api import router as ai_router
 from app.modules.module1_asset.api import router as asset_router, cal_router as asset_cal_router
 from app.modules.module2_ipam.api import router as ipam_router
 from app.modules.module5_config.api import router as config_router
+from app.modules.module3_monitoring.api import router as alert_router, rule_router, notif_router
 
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(eventwall_router, prefix="/api/v1")
@@ -150,3 +151,6 @@ app.include_router(asset_router, prefix="/api/v1")
 app.include_router(asset_cal_router, prefix="/api/v1")
 app.include_router(ipam_router, prefix="/api/v1")
 app.include_router(config_router, prefix="/api/v1")
+app.include_router(alert_router, prefix="/api/v1")
+app.include_router(rule_router, prefix="/api/v1")
+app.include_router(notif_router, prefix="/api/v1")

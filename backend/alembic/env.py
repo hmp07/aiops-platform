@@ -17,6 +17,10 @@ from app.modules.module8_ai.models import (  # noqa: F401
 from app.modules.module1_asset.models import Device, CalibrationReport  # noqa: F401
 from app.modules.module2_ipam.models import Subnet, IPAllocation  # noqa: F401
 from app.modules.module5_config.models import ConfigBackup, ConfigDiff, BatchOperation  # noqa: F401
+from app.modules.module3_monitoring.models import (
+    Alert, AlertRule, NotificationChannel, NotificationPolicy,
+    EvidenceSnapshot, Metric,
+)  # noqa: F401
 
 config = context.config
 settings = get_settings()
