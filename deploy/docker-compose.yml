@@ -40,6 +40,7 @@ services:
       - miniodata:/data
 
   api:
+    image: aiops-platform-api:latest
     build:
       context: ../backend
       dockerfile: Dockerfile
@@ -63,6 +64,7 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   celery-worker:
+    image: aiops-platform-celery-worker:latest
     build:
       context: ../backend
       dockerfile: Dockerfile
@@ -78,6 +80,7 @@ services:
     command: celery -A app.core.scheduler.celery_app worker -l info -c 4
 
   celery-beat:
+    image: aiops-platform-celery-beat:latest
     build:
       context: ../backend
       dockerfile: Dockerfile
@@ -92,6 +95,7 @@ services:
     command: celery -A app.core.scheduler.celery_app beat -l info
 
   frontend:
+    image: aiops-platform-frontend:latest
     build:
       context: ../frontend
       dockerfile: Dockerfile
