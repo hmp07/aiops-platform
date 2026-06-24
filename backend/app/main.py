@@ -144,6 +144,8 @@ from app.modules.module2_ipam.api import router as ipam_router
 from app.modules.module5_config.api import router as config_router
 from app.modules.module3_monitoring.api import router as alert_router, rule_router, notif_router
 from app.modules.module6_apm.api import router as apm_router
+from app.modules.module7_knowledge.api import router as knowledge_router
+from app.modules.module8_ai.knowledge_graph.api import router as kg_router
 
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(eventwall_router, prefix="/api/v1")
@@ -156,3 +158,5 @@ app.include_router(alert_router, prefix="/api/v1")
 app.include_router(rule_router, prefix="/api/v1")
 app.include_router(notif_router, prefix="/api/v1")
 app.include_router(apm_router, prefix="/api/v1")
+app.include_router(knowledge_router, prefix="/api/v1")
+app.include_router(kg_router, prefix="/api/v1")

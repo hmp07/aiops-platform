@@ -27,7 +27,7 @@ async def list_services(page: int = Query(1, ge=1), page_size: int = Query(20, g
     return ServiceListResponse(total=total, items=items)
 
 @router.post("/services", response_model=ServiceResponse, status_code=201)
-@require_permission("apm:service:list")
+@require_permission("apm:service:create")
 async def create_service(req: ServiceCreate, current_user: dict = Depends(get_current_user),
                          svc: APMServiceLayer = Depends(_get_svc)):
     return await svc.create_service(req.model_dump())
@@ -38,7 +38,7 @@ async def get_service(service_id: UUID, current_user: dict = Depends(get_current
     return await svc.get_service(service_id)
 
 @router.post("/services/{service_id}/update", response_model=ServiceResponse)
-@require_permission("apm:service:retrieve")
+@require_permission("apm:service:update")
 async def update_service(service_id: UUID, req: ServiceUpdate,
     current_user: dict = Depends(get_current_user), svc: APMServiceLayer = Depends(_get_svc)):
     return await svc.update_service(service_id, req.model_dump(exclude_none=True))
@@ -49,7 +49,7 @@ async def get_topology(current_user: dict = Depends(get_current_user),
     return await svc.get_topology()
 
 @router.post("/topology/edges", response_model=EdgeResponse, status_code=201)
-@require_permission("apm:topology:view")
+@require_permission("apm:topology:create")
 async def add_edge(req: EdgeCreate, current_user: dict = Depends(get_current_user),
                    svc: APMServiceLayer = Depends(_get_svc)):
     return await svc.add_edge(req.model_dump())
