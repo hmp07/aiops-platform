@@ -31,9 +31,11 @@ class AlertRepository:
         return total, list(rows)
 
     async def find_recent(self, device_id: UUID, title_prefix: str, minutes: int = 5) -> Alert | None:
+        import re
+        safe_prefix = re.sub(r'([%_\\])', r'\\\1', title_prefix)
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
         q = select(Alert).where(
-            Alert.device_id == device_id, Alert.title.ilike(f"{title_prefix}%"),
+            Alert.device_id == device_id, Alert.title.ilike(f"{safe_prefix}%"),
             Alert.time >= cutoff, Alert.status == "triggered",
         ).order_by(Alert.time.desc()).limit(1)
         result = await self._s.execute(q)

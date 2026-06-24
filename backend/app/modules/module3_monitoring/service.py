@@ -81,8 +81,8 @@ class AlertService:
     async def resolve(self, alert_id: UUID, user_id: str) -> dict:
         return await self._transition(alert_id, "resolved", {"resolved_by": user_id})
 
-    async def close(self, alert_id: UUID) -> dict:
-        return await self._transition(alert_id, "closed", {})
+    async def close(self, alert_id: UUID, user_id: str = "") -> dict:
+        return await self._transition(alert_id, "closed", {"resolved_by": user_id})
 
     async def get_stats(self) -> dict:
         _, rows = await self._repo.list_all(1, 1000, None, None, None, None)
