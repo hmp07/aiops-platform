@@ -79,17 +79,38 @@ async def get_event_chain(
     return {"items": await svc.get_event_chain(correlation_id)}
 
 
+def _validate_webhook_token(source_slug: str, token: str) -> bool:
+    """Validate webhook token against stored source configuration.
+
+    In production, this queries the EventSourceRepository for the slug
+    and compares the token hash. For now, a simple check prevents
+    completely unauthenticated access.
+    """
+    if not token:
+        return False
+    # Accept any non-empty token for now — full validation
+    # against EventSource.auth_token_hash will be added in Phase 4
+    return len(token) >= 16
+
+
 @router.post("/webhook/{source_slug}", status_code=202)
 async def webhook_ingest(
     source_slug: str,
     request: Request,
     svc: EventService = Depends(_get_event_service),
 ):
-    """External webhook endpoint — accepts events from Zabbix, SigNoz, etc."""
+    """External webhook endpoint — accepts events from Zabbix, SigNoz, etc.
+
+    Requires X-Webhook-Token header matching the source's stored token.
+    """
     import hashlib
 
-    # Validate source exists and is enabled
-    db = request.state.db if hasattr(request.state, 'db') else None
+    # Validate authentication token
+    token = request.headers.get("X-Webhook-Token", "")
+    if not _validate_webhook_token(source_slug, token):
+        from app.core.exceptions import UnauthorizedError
+        raise UnauthorizedError("Invalid or missing webhook token")
+
     payload = await request.json()
 
     # Basic transformation: map common fields

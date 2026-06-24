@@ -66,19 +66,19 @@ async def create_session(
 @router.get("/sessions/{session_id}", response_model=ChatSessionResponse)
 async def get_session(
     session_id: UUID,
-    _: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     svc: AgentService = Depends(_get_agent_service),
 ):
-    return await svc.get_session(session_id)
+    return await svc.get_session(session_id, user["user_id"])
 
 
 @router.post("/sessions/{session_id}/delete")
 async def delete_session(
     session_id: UUID,
-    _: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     svc: AgentService = Depends(_get_agent_service),
 ):
-    await svc.delete_session(session_id)
+    await svc.delete_session(session_id, user["user_id"])
     return {"status": "deleted", "session_id": str(session_id)}
 
 
@@ -89,10 +89,10 @@ async def delete_session(
 @router.get("/sessions/{session_id}/messages", response_model=ChatMessageListResponse)
 async def get_messages(
     session_id: UUID,
-    _: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     svc: AgentService = Depends(_get_agent_service),
 ):
-    items = await svc.get_messages(session_id)
+    items = await svc.get_messages(session_id, user["user_id"])
     return ChatMessageListResponse(items=items)
 
 

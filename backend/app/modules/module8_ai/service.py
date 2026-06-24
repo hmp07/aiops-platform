@@ -148,20 +148,31 @@ class AgentService(IAgentService):
                 "last_message_at": datetime.now(timezone.utc),
             })
 
-    async def get_session(self, session_id: uuid.UUID) -> dict | None:
+    async def get_session(self, session_id: uuid.UUID, user_id: str = "") -> dict | None:
         obj = await self._chat.get(session_id)
+        if obj and user_id and obj.user_id != user_id:
+            from app.core.exceptions import ForbiddenError
+            raise ForbiddenError("Access denied: session does not belong to you")
         return self._chat_to_dict(obj) if obj else None
 
     async def list_sessions(self, user_id: str, page: int = 1, page_size: int = 20) -> tuple[int, list[dict]]:
         total, rows = await self._chat.list_by_user(user_id, page, page_size)
         return total, [self._chat_to_dict(r) for r in rows]
 
-    async def delete_session(self, session_id: uuid.UUID):
+    async def delete_session(self, session_id: uuid.UUID, user_id: str = ""):
         obj = await self._chat.get(session_id)
         if obj:
+            if user_id and obj.user_id != user_id:
+                from app.core.exceptions import ForbiddenError
+                raise ForbiddenError("Access denied: session does not belong to you")
             await self._chat.delete(obj)
 
-    async def get_messages(self, session_id: uuid.UUID) -> list[dict]:
+    async def get_messages(self, session_id: uuid.UUID, user_id: str = "") -> list[dict]:
+        # Verify ownership first
+        chat = await self._chat.get(session_id)
+        if chat and user_id and chat.user_id != user_id:
+            from app.core.exceptions import ForbiddenError
+            raise ForbiddenError("Access denied: session does not belong to you")
         rows = await self._msgs.list_by_session(session_id)
         return [self._msg_to_dict(r) for r in rows]
 
