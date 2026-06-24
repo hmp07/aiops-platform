@@ -44,13 +44,19 @@ async def _verify_webhook_key(x_webhook_key: str = Header(default="")):
         raise UnauthorizedError("Invalid webhook key")
 
 
-async def _verify_device_access(current_user: dict, req_device_id: UUID | None, svc: AlertService):
-    """Verify current user can access the given device. Stub: admin/engineer can access all."""
-    if current_user.get("role") in ("admin", "engineer", "operator"):
-        return True
-    if not req_device_id:
-        return True
-    return True  # Full device-level RBAC in Phase 9
+async def _verify_device_access(current_user: dict, req_device_id: UUID | None, svc: AlertService | None):
+    """Verify current user can access the given device.
+
+    Admin/engineer/operator have full access. Viewer is denied write access
+    by @require_permission decorators; read access is allowed for all roles.
+    Full device-level RBAC with user-device mapping will be implemented in Phase 9.
+    """
+    role = current_user.get("role", "viewer")
+    if role in ("admin", "engineer", "operator"):
+        return
+    # Viewer/demo: allow read, deny write (write already blocked by @require_permission)
+    # Phase 9 will add per-device ownership checks
+    return
 
 
 # ---- Alerts ----
