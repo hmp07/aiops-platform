@@ -1,0 +1,49 @@
+# Reference project
+sxdevops/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+backend/.env
+
+# Node
+node_modules/
+dist/
+frontend/dist/
+demo/frontend/dist/
+demo/frontend/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Docker volumes
+pgdata/
+redisdata/
+miniodata/
+
+# Upload archives
+*.tar.gz
+*.zip
+
+# Logs
+*.log
+logs/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Claude
+.claude/
+memory/
+MEMORY.md
