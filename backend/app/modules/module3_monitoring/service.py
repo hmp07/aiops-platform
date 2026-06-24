@@ -158,8 +158,10 @@ class NotificationService:
     async def create_policy(self, data: dict) -> dict: return self._pol_to_dict(await self._pol.create(data))
 
     def _ch_to_dict(self, obj) -> dict:
+        config = {k: v for k, v in obj.config.items()
+                  if k not in ("password", "api_key", "token", "secret", "webhook_url")}
         return {"id": obj.id, "channel_type": obj.channel_type, "name": obj.name,
-                "config": obj.config, "is_enabled": obj.is_enabled, "created_at": obj.created_at}
+                "config": config, "is_enabled": obj.is_enabled, "created_at": obj.created_at}
     def _pol_to_dict(self, obj) -> dict:
         return {"id": obj.id, "name": obj.name, "channel_id": obj.channel_id,
                 "severity_filter": obj.severity_filter, "device_filter": obj.device_filter,
