@@ -79,18 +79,21 @@ async def get_event_chain(
     return {"items": await svc.get_event_chain(correlation_id)}
 
 
-def _validate_webhook_token(source_slug: str, token: str) -> bool:
+async def _validate_webhook_token(source_slug: str, token: str, db: AsyncSession) -> bool:
     """Validate webhook token against stored source configuration.
 
-    In production, this queries the EventSourceRepository for the slug
-    and compares the token hash. For now, a simple check prevents
-    completely unauthenticated access.
+    Uses constant-time comparison against the stored auth_token_hash
+    to prevent timing attacks.
     """
-    if not token:
+    if not token or not source_slug:
         return False
-    # Accept any non-empty token for now — full validation
-    # against EventSource.auth_token_hash will be added in Phase 4
-    return len(token) >= 16
+    import hashlib, hmac
+    repo = EventSourceRepository(db)
+    source = await repo.get_by_slug(source_slug)
+    if not source or not source.is_enabled or not source.auth_token_hash:
+        return False
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    return hmac.compare_digest(token_hash, source.auth_token_hash)
 
 
 @router.post("/webhook/{source_slug}", status_code=202)
@@ -98,16 +101,15 @@ async def webhook_ingest(
     source_slug: str,
     request: Request,
     svc: EventService = Depends(_get_event_service),
+    db: AsyncSession = Depends(get_db),
 ):
     """External webhook endpoint — accepts events from Zabbix, SigNoz, etc.
 
     Requires X-Webhook-Token header matching the source's stored token.
     """
-    import hashlib
-
-    # Validate authentication token
+    # Validate authentication token (constant-time comparison)
     token = request.headers.get("X-Webhook-Token", "")
-    if not _validate_webhook_token(source_slug, token):
+    if not await _validate_webhook_token(source_slug, token, db):
         from app.core.exceptions import UnauthorizedError
         raise UnauthorizedError("Invalid or missing webhook token")
 
