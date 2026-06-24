@@ -51,14 +51,14 @@ async def adapter_health(current_user: dict = Depends(get_current_user)):
         async with async_session_factory() as db:
             await db.execute(db.execute.__func__)
         adapters["database"] = "healthy"
-    except Exception as e:
-        adapters["database"] = f"unhealthy: {e}"
+    except Exception:
+        adapters["database"] = "unhealthy"
     # Check Redis
     try:
         from app.core.cache.redis import get_redis
         r = await get_redis()
         await r.ping()
         adapters["redis"] = "healthy"
-    except Exception as e:
-        adapters["redis"] = f"unhealthy: {e}"
+    except Exception:
+        adapters["redis"] = "unhealthy"
     return {"adapters": adapters}
