@@ -20,7 +20,7 @@ class DeviceCreate(BaseModel):
     user_department: str | None = None
     up_link_device_id: UUID | None = None
     up_link_port: str | None = None
-    extra_attrs: dict = Field(default_factory=dict, serialization_alias="metadata")
+    extra_attrs: dict = Field(default_factory=dict)
 
 
 class DeviceUpdate(BaseModel):
@@ -38,7 +38,7 @@ class DeviceUpdate(BaseModel):
     user_department: str | None = None
     up_link_device_id: UUID | None = None
     up_link_port: str | None = None
-    extra_attrs: dict | None = Field(default=None, serialization_alias="metadata")
+    extra_attrs: dict | None = None
 
 
 class DeviceResponse(BaseModel):
@@ -61,7 +61,7 @@ class DeviceResponse(BaseModel):
     last_backup_at: datetime | None = None
     last_inspection_status: str | None = None
     last_inspection_at: datetime | None = None
-    extra_attrs: dict = Field(serialization_alias="metadata")
+    extra_attrs: dict
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}

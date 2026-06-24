@@ -37,7 +37,7 @@ class DeviceQueryService(IDeviceQueryService):
             "up_link_device_id": obj.up_link_device_id, "up_link_port": obj.up_link_port,
             "last_backup_status": obj.last_backup_status, "last_backup_at": obj.last_backup_at,
             "last_inspection_status": obj.last_inspection_status, "last_inspection_at": obj.last_inspection_at,
-            "metadata": obj.extra_attrs, "created_at": obj.created_at, "updated_at": obj.updated_at,
+            "extra_attrs": obj.extra_attrs, "created_at": obj.created_at, "updated_at": obj.updated_at,
         }
 
 
