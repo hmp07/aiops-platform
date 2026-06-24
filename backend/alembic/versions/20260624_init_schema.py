@@ -264,7 +264,124 @@ def upgrade() -> None:
     op.create_index('ix_eventwall_sources_source_type', 'eventwall_sources', ['source_type'])
 
 
+    # ---- M1 Asset ----
+    op.create_table('devices',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('device_name', sa.String(128), nullable=False),
+        sa.Column('device_type', sa.String(64), nullable=False),
+        sa.Column('vendor', sa.String(64), nullable=False),
+        sa.Column('model', sa.String(128), nullable=False),
+        sa.Column('serial_number', sa.String(128), nullable=True),
+        sa.Column('software_version', sa.String(128), nullable=True),
+        sa.Column('management_ip', postgresql.INET(), nullable=True),
+        sa.Column('location', sa.String(256), nullable=True),
+        sa.Column('cabinet', sa.String(64), nullable=True),
+        sa.Column('lifecycle_status', sa.String(32), nullable=False, server_default='in_use'),
+        sa.Column('business_system', sa.String(128), nullable=True),
+        sa.Column('user_department', sa.String(128), nullable=True),
+        sa.Column('up_link_device_id', sa.UUID(), sa.ForeignKey('devices.id'), nullable=True),
+        sa.Column('up_link_port', sa.String(64), nullable=True),
+        sa.Column('last_backup_status', sa.String(16), nullable=True),
+        sa.Column('last_backup_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('last_inspection_status', sa.String(16), nullable=True),
+        sa.Column('last_inspection_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('metadata', postgresql.JSONB(), nullable=False, server_default='{}'),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index('ix_devices_name', 'devices', ['device_name'])
+    op.create_index('ix_devices_type', 'devices', ['device_type'])
+
+    op.create_table('calibration_reports',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('device_id', sa.UUID(), sa.ForeignKey('devices.id'), nullable=False),
+        sa.Column('source', sa.String(32), nullable=False),
+        sa.Column('field_name', sa.String(64), nullable=False),
+        sa.Column('current_value', sa.Text(), nullable=True),
+        sa.Column('discovered_value', sa.Text(), nullable=True),
+        sa.Column('status', sa.String(16), nullable=False, server_default='pending'),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index('ix_calibrations_device', 'calibration_reports', ['device_id'])
+
+    # ---- M2 IPAM ----
+    op.create_table('subnets',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('cidr', sa.String(64), nullable=False),
+        sa.Column('vlan_id', sa.Integer(), nullable=True),
+        sa.Column('gateway', postgresql.INET(), nullable=True),
+        sa.Column('description', sa.String(256), nullable=True),
+        sa.Column('total_ips', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('used_ips', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('cidr'),
+    )
+
+    op.create_table('ip_allocations',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('subnet_id', sa.UUID(), sa.ForeignKey('subnets.id'), nullable=False),
+        sa.Column('ip_address', postgresql.INET(), nullable=False),
+        sa.Column('status', sa.String(16), nullable=False, server_default='free'),
+        sa.Column('device_id', sa.UUID(), sa.ForeignKey('devices.id'), nullable=True),
+        sa.Column('interface_name', sa.String(64), nullable=True),
+        sa.Column('source', sa.String(32), nullable=False, server_default='manual'),
+        sa.Column('allocated_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('released_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index('ix_ip_allocations_subnet', 'ip_allocations', ['subnet_id'])
+
+    # ---- M5 Config ----
+    op.create_table('config_backups',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('device_id', sa.UUID(), sa.ForeignKey('devices.id'), nullable=False),
+        sa.Column('backup_type', sa.String(16), nullable=False, server_default='scheduled'),
+        sa.Column('status', sa.String(16), nullable=False, server_default='success'),
+        sa.Column('file_size', sa.Integer(), nullable=False, server_default='0'),
+        sa.Column('file_path', sa.String(256), nullable=True),
+        sa.Column('config_hash', sa.String(64), nullable=True),
+        sa.Column('backup_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index('ix_config_backups_device', 'config_backups', ['device_id'])
+
+    op.create_table('config_diffs',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('device_id', sa.UUID(), sa.ForeignKey('devices.id'), nullable=False),
+        sa.Column('old_backup_id', sa.UUID(), sa.ForeignKey('config_backups.id'), nullable=False),
+        sa.Column('new_backup_id', sa.UUID(), sa.ForeignKey('config_backups.id'), nullable=False),
+        sa.Column('diff_content', sa.Text(), nullable=True),
+        sa.Column('risk_level', sa.String(16), nullable=False, server_default='normal'),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index('ix_config_diffs_device', 'config_diffs', ['device_id'])
+
+    op.create_table('batch_operations',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('operation_type', sa.String(32), nullable=False),
+        sa.Column('device_ids', postgresql.JSONB(), nullable=False),
+        sa.Column('status', sa.String(16), nullable=False, server_default='pending'),
+        sa.Column('result_summary', postgresql.JSONB(), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.PrimaryKeyConstraint('id'),
+    )
+
+
 def downgrade() -> None:
+    op.drop_table('batch_operations')
+    op.drop_table('config_diffs')
+    op.drop_table('config_backups')
+    op.drop_table('ip_allocations')
+    op.drop_table('subnets')
+    op.drop_table('calibration_reports')
+    op.drop_table('devices')
     op.drop_table('eventwall_sources')
     op.drop_table('eventwall_faults')
     op.drop_table('eventwall_events')
