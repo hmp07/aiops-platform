@@ -39,7 +39,7 @@ async def list_backups(
 @require_permission("config:backup:trigger")
 async def trigger_backup(
     req: BackupTriggerRequest = BackupTriggerRequest(),
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: ConfigBackupService = Depends(_get_backup_svc),
 ):
     items = await svc.trigger_backup(req.device_ids)

@@ -47,7 +47,7 @@ async def list_devices(
 @require_permission("asset:device:create")
 async def create_device(
     req: DeviceCreate,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: DeviceManageService = Depends(_get_manage_svc),
 ):
     return await svc.create_device(req.model_dump())
@@ -66,7 +66,7 @@ async def get_device(
 @require_permission("asset:device:update")
 async def update_device(
     device_id: UUID, req: DeviceUpdate,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: DeviceManageService = Depends(_get_manage_svc),
 ):
     return await svc.update_device(device_id, req.model_dump(exclude_none=True))
@@ -76,7 +76,7 @@ async def update_device(
 @require_permission("asset:device:delete")
 async def delete_device(
     device_id: UUID,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: DeviceManageService = Depends(_get_manage_svc),
 ):
     await svc.delete_device(device_id)
@@ -119,7 +119,7 @@ async def list_calibrations(
 @require_permission("asset:calibration:execute")
 async def run_calibration(
     req: CalibrationRunRequest = CalibrationRunRequest(),
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: CalibrationService = Depends(_get_cal_svc),
 ):
     items = await svc.run_calibration(req.device_ids, req.source)
@@ -130,7 +130,7 @@ async def run_calibration(
 @require_permission("asset:calibration:approve")
 async def approve_calibration(
     report_id: UUID, req: CalibrationApproveRequest,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: CalibrationService = Depends(_get_cal_svc),
 ):
     return await svc.approve_report(report_id, req.status)

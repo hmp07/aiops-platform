@@ -40,7 +40,7 @@ async def list_subnets(
 @require_permission("ipam:subnet:create")
 async def create_subnet(
     req: SubnetCreate,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: SubnetService = Depends(_get_subnet_svc),
 ):
     return await svc.create_subnet(req.model_dump())
@@ -50,7 +50,7 @@ async def create_subnet(
 @require_permission("ipam:subnet:update")
 async def update_subnet(
     subnet_id: UUID, req: SubnetUpdate,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: SubnetService = Depends(_get_subnet_svc),
 ):
     return await svc.update_subnet(subnet_id, req.model_dump(exclude_none=True))
@@ -60,7 +60,7 @@ async def update_subnet(
 @require_permission("ipam:subnet:delete")
 async def delete_subnet(
     subnet_id: UUID,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: SubnetService = Depends(_get_subnet_svc),
 ):
     await svc.delete_subnet(subnet_id)
@@ -83,7 +83,7 @@ async def list_allocations(
 @require_permission("ipam:ip:allocate")
 async def allocate_ip(
     req: IPAllocationCreate,
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: IPAllocationService = Depends(_get_alloc_svc),
 ):
     return await svc.allocate(req.model_dump())
@@ -93,7 +93,7 @@ async def allocate_ip(
 @require_permission("ipam:ip:release")
 async def release_ip(
     allocation_id: UUID, _req: IPAllocationRelease = IPAllocationRelease(),
-    _u: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     svc: IPAllocationService = Depends(_get_alloc_svc),
 ):
     return await svc.release(allocation_id)
