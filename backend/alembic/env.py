@@ -21,6 +21,7 @@ from app.modules.module3_monitoring.models import (
     Alert, AlertRule, NotificationChannel, NotificationPolicy,
     EvidenceSnapshot, Metric,
 )  # noqa: F401
+from app.modules.module6_apm.models import APMService, ServiceEdge, CrossLayerMapping  # noqa: F401
 
 config = context.config
 settings = get_settings()
