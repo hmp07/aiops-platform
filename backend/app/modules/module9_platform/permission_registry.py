@@ -57,7 +57,8 @@ PERMISSION_DEFINITIONS: dict[str, dict] = {
     "log:source:update": {"name": "更新日志源", "category": "log", "sort": 3},
     "log:source:delete": {"name": "删除日志源", "category": "log", "sort": 4},
     "log:entry:search":  {"name": "搜索日志", "category": "log", "sort": 5},
-    "log:entry:export":  {"name": "导出日志", "category": "log", "sort": 6},
+    "log:entry:ingest":  {"name": "写入日志", "category": "log", "sort": 6},
+    "log:entry:export":  {"name": "导出日志", "category": "log", "sort": 7},
 
     # ---- Module 5: Config ----
     "config:backup:list":    {"name": "查看备份列表", "category": "config", "sort": 1},

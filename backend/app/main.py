@@ -147,6 +147,7 @@ from app.modules.module6_apm.api import router as apm_router
 from app.modules.module7_knowledge.api import router as knowledge_router
 from app.modules.module8_ai.knowledge_graph.api import router as kg_router
 from app.modules.module4_log.api import router as log_router
+from app.modules.module11_scheduler.api import router as scheduler_router
 
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(eventwall_router, prefix="/api/v1")
@@ -162,3 +163,4 @@ app.include_router(apm_router, prefix="/api/v1")
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(kg_router, prefix="/api/v1")
 app.include_router(log_router, prefix="/api/v1")
+app.include_router(scheduler_router, prefix="/api/v1")

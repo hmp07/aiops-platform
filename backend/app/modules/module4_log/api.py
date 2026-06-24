@@ -34,7 +34,7 @@ async def list_logs(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1,
     } for r in items])
 
 @router.post("/ingest", status_code=201)
-@require_permission("log:entry:search")
+@require_permission("log:entry:ingest")
 async def ingest_logs(req: LogIngestRequest, current_user: dict = Depends(get_current_user),
                       repo: LogRepository = Depends(_get_log_repo)):
     count = 0
@@ -49,10 +49,12 @@ async def ingest_logs(req: LogIngestRequest, current_user: dict = Depends(get_cu
 async def list_sources(current_user: dict = Depends(get_current_user),
                        repo: LogSourceRepository = Depends(_get_src_repo)):
     sources = await repo.list_all()
+    SENSITIVE_KEYS = {"password", "token", "secret", "api_key", "credential",
+                      "auth", "private_key", "passphrase"}
     return [{"id": s.id, "name": s.name, "source_type": s.source_type,
              "host": s.host, "config": {k:v for k,v in s.config.items()
-             if k not in ("password","token","secret")}, "is_enabled": s.is_enabled,
-             "created_at": s.created_at} for s in sources]
+             if not any(sk in k.lower() for sk in SENSITIVE_KEYS)},
+             "is_enabled": s.is_enabled, "created_at": s.created_at} for s in sources]
 
 @router.post("/sources", response_model=LogSourceResponse, status_code=201)
 @require_permission("log:source:create")
