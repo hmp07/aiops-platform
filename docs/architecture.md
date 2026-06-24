@@ -2,9 +2,9 @@
 
 ---
 
-**版本**：V2.0
-**日期**：2026-05-29
-**状态**：Phase 2 已完成（EventWall + RBAC 增强），Phase 3 待实施（Agent 引擎重设计）
+**版本**：V2.1
+**日期**：2026-06-25
+**状态**：Phase 4 已完成（数据底座），Phase 5 待实施（监控闭环）
 
 ---
 
@@ -67,11 +67,11 @@ AIOps Platform 是一个 AI 增强型智能运维管理平台，借鉴 SxDevOps 
 
 | 模块 | 名称 | 状态 | 核心职责 |
 |------|------|------|---------|
-| **M1** | 设备资产管理 | 待实施 | 设备 CRUD、SNMP/SSH 校准、生命周期管理、批量导入导出 |
-| **M2** | IP 地址管理 | 待实施 | 子网/VLAN 管理、IP 分配状态机、ARP 自动发现 |
+| **M1** | 设备资产管理 | ✅ Phase 4 | 设备 CRUD + 校准（10 个 API 端点）、EventRecordingMixin |
+| **M2** | IP 地址管理 | ✅ Phase 4 | 子网/VLAN 管理、IP 分配/释放状态机（7 个 API 端点） |
 | **M3** | 基础设施监控与告警 | 待实施 | 告警状态机、规则引擎、证据收集、通知触达、降噪 |
 | **M4** | 日志分析 | 待实施 | 多源日志汇聚、统一检索、AI 关联分析、故障追溯 |
-| **M5** | 配置备份与自动化 | 待实施 | 定时备份、配置 Diff、回滚（审批门禁）、批量操作 |
+| **M5** | 配置备份与自动化 | ✅ Phase 4 | 备份触发、Diff 引擎（difflib）、风险评级（5 个 API 端点） |
 | **M6** | 应用性能监控 | 待实施 | SigNoz 对接、服务拓扑、跨层数据关联（F6.9） |
 | **M7** | 知识库 | 待实施 | 故障案例、命令模板、应急预案、RAG 向量搜索、自动归档 |
 | **M8** | AI 智能引擎 | 待重写 | Action Router、Preflight 安全关卡、Skill/SOP 系统、Tool Registry、两阶段安全、知识图谱 |
@@ -565,7 +565,7 @@ backend/
 | **Phase 1** | 脚手架搭建 | FastAPI 工厂、JWT、DB Session、前端框架、Docker | ✅ |
 | **Phase 2** | EventWall + RBAC | M10 事件墙、90 权限码、`require_permission`、7 角色、Demo 守卫、ORM Mixin | ✅ |
 | **Phase 3** | Agent 引擎重设计 | Action Router、Preflight、Skill 系统、Tool Registry、5 审计表、SSE 端点、3 个内置 Skill | 待实施 |
-| **Phase 4** | 数据底座（M1/M2/M5） | 设备 CRUD + 校准、IPAM、配置备份 + Diff、EventRecordingMixin 全应用 | 待实施 |
+| **Phase 4** | 数据底座（M1/M2/M5） | 设备 CRUD + 校准、IPAM、配置备份 + Diff、EventRecordingMixin 全应用、22 个 API 端点 | ✅ |
 | **Phase 5** | 监控闭环（M3） | 告警状态机、Zabbix 适配器、证据收集、降噪、证据编排 Skill | 待实施 |
 | **Phase 6** | APM 集成（M6） | SigNoz 适配器、跨层映射、跨层定界 Skill | 待实施 |
 | **Phase 7** | 知识库 + 图谱（M7 + M8 Graph） | pgvector、RAG、自动归档、知识图谱（邻接表 + ReactFlow） | 待实施 |
@@ -590,6 +590,58 @@ backend/
 | **前端状态** | Zustand + TanStack Query | UI 状态与服务端状态职责分离 |
 
 ---
+
+## 十三、Phase 4 数据底座 API 参考
+
+### M1 设备资产管理（10 端点）
+
+| 端点 | 方法 | 说明 | 权限 |
+|------|------|------|------|
+| `/api/v1/devices` | GET | 设备列表（支持 device_type/vendor/status/keyword 筛选） | `asset:device:list` |
+| `/api/v1/devices` | POST | 创建设备 | `asset:device:create` |
+| `/api/v1/devices/{id}` | GET | 设备详情 | `asset:device:retrieve` |
+| `/api/v1/devices/{id}/update` | POST | 更新设备 | `asset:device:update` |
+| `/api/v1/devices/{id}/delete` | POST | 软删除设备 | `asset:device:delete` |
+| `/api/v1/devices/{id}/ips` | GET | 设备关联 IP | `asset:device:retrieve` |
+| `/api/v1/devices/{id}/alerts` | GET | 设备关联告警 | `asset:device:retrieve` |
+| `/api/v1/calibrations` | GET | 校准报告列表 | `asset:calibration:list` |
+| `/api/v1/calibrations/run` | POST | 触发 SNMP/SSH 校准 | `asset:calibration:execute` |
+| `/api/v1/calibrations/{id}/approve` | POST | 确认/拒绝校准差异 | `asset:calibration:approve` |
+
+### M2 IP 地址管理（7 端点）
+
+| 端点 | 方法 | 说明 | 权限 |
+|------|------|------|------|
+| `/api/v1/ipam/subnets` | GET | 子网列表 | `ipam:subnet:list` |
+| `/api/v1/ipam/subnets` | POST | 创建子网（自动计算 total_ips） | `ipam:subnet:create` |
+| `/api/v1/ipam/subnets/{id}/update` | POST | 更新子网 | `ipam:subnet:update` |
+| `/api/v1/ipam/subnets/{id}/delete` | POST | 删除子网 | `ipam:subnet:delete` |
+| `/api/v1/ipam/allocations` | GET | IP 分配列表 | `ipam:ip:list` |
+| `/api/v1/ipam/allocations/allocate` | POST | 分配 IP（自动更新 used_ips） | `ipam:ip:allocate` |
+| `/api/v1/ipam/allocations/{id}/release` | POST | 释放 IP | `ipam:ip:release` |
+
+### M5 配置备份与自动化（5 端点）
+
+| 端点 | 方法 | 说明 | 权限 |
+|------|------|------|------|
+| `/api/v1/configs/backups` | GET | 备份列表 | `config:backup:list` |
+| `/api/v1/configs/backups/trigger` | POST | 触发配置备份（生成 SHA256 + diff） | `config:backup:trigger` |
+| `/api/v1/configs/diffs` | GET | Diff 列表 | `config:diff:view` |
+| `/api/v1/configs/diff/{device_id}` | GET | 设备最新配置 Diff（含风险评级） | `config:diff:view` |
+
+### 模块数据库表（6 张新表）
+
+| 表 | 所属模块 | 关键字段 |
+|----|---------|---------|
+| `devices` | M1 | device_name, device_type, vendor, model, extra_attrs(JSONB), deleted_at(软删除) |
+| `calibration_reports` | M1 | device_id(FK), source, field_name, status(pending/confirmed/rejected) |
+| `subnets` | M2 | cidr(UNIQUE), vlan_id, gateway, total_ips, used_ips |
+| `ip_allocations` | M2 | subnet_id(FK), ip_address, status(free/allocated/reserved), device_id(FK) |
+| `config_backups` | M5 | device_id(FK), backup_type, status, config_hash(SHA256), file_size |
+| `config_diffs` | M5 | device_id(FK), old/new_backup_id(FK), diff_content, risk_level(normal/suspicious/high) |
+
+> 所有表均使用 `EventRecordingMixin`，CRUD 操作自动发布 EventWall 事件。所有写操作遵循 POST 约定，无 PUT/DELETE 方法。
+
 
 ## 附录 A：事件 Schema 标准
 
