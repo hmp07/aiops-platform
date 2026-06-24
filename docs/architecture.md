@@ -2,9 +2,9 @@
 
 ---
 
-**版本**：V2.1
+**版本**：V2.2
 **日期**：2026-06-25
-**状态**：Phase 4 已完成（数据底座），Phase 5 待实施（监控闭环）
+**状态**：Phase 5 已完成（监控闭环），Phase 6 待实施（APM 集成）
 
 ---
 
@@ -69,7 +69,7 @@ AIOps Platform 是一个 AI 增强型智能运维管理平台，借鉴 SxDevOps 
 |------|------|------|---------|
 | **M1** | 设备资产管理 | ✅ Phase 4 | 设备 CRUD + 校准（10 个 API 端点）、EventRecordingMixin |
 | **M2** | IP 地址管理 | ✅ Phase 4 | 子网/VLAN 管理、IP 分配/释放状态机（7 个 API 端点） |
-| **M3** | 基础设施监控与告警 | 待实施 | 告警状态机、规则引擎、证据收集、通知触达、降噪 |
+| **M3** | 基础设施监控与告警 | ✅ Phase 5 | 告警状态机（5态）、规则引擎、Webhook、降噪去重、证据收集、通知策略（6 表 14 端点） |
 | **M4** | 日志分析 | 待实施 | 多源日志汇聚、统一检索、AI 关联分析、故障追溯 |
 | **M5** | 配置备份与自动化 | ✅ Phase 4 | 备份触发、Diff 引擎（difflib）、风险评级（5 个 API 端点） |
 | **M6** | 应用性能监控 | 待实施 | SigNoz 对接、服务拓扑、跨层数据关联（F6.9） |
@@ -566,7 +566,7 @@ backend/
 | **Phase 2** | EventWall + RBAC | M10 事件墙、90 权限码、`require_permission`、7 角色、Demo 守卫、ORM Mixin | ✅ |
 | **Phase 3** | Agent 引擎重设计 | Action Router、Preflight、Skill 系统、Tool Registry、5 审计表、SSE 端点、3 个内置 Skill | 待实施 |
 | **Phase 4** | 数据底座（M1/M2/M5） | 设备 CRUD + 校准、IPAM、配置备份 + Diff、EventRecordingMixin 全应用、22 个 API 端点 | ✅ |
-| **Phase 5** | 监控闭环（M3） | 告警状态机、Zabbix 适配器、证据收集、降噪、证据编排 Skill | 待实施 |
+| **Phase 5** | 监控闭环（M3） | 告警状态机、Webhook 接入、规则引擎、降噪去重、证据收集、通知策略、14 个 API 端点 | ✅ |
 | **Phase 6** | APM 集成（M6） | SigNoz 适配器、跨层映射、跨层定界 Skill | 待实施 |
 | **Phase 7** | 知识库 + 图谱（M7 + M8 Graph） | pgvector、RAG、自动归档、知识图谱（邻接表 + ReactFlow） | 待实施 |
 | **Phase 8** | AI 对话前端 | FAB 浮窗 + 全屏页面、SSE 流式、富卡片、待确认动作 UI | 待实施 |
