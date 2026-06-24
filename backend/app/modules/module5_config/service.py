@@ -21,7 +21,18 @@ class ConfigBackupService:
 
     async def trigger_backup(self, device_ids: list[UUID] | None = None) -> list[dict]:
         """Mock backup — generates random config text and computes hash."""
-        devices = device_ids or [UUID("00000000-0000-0000-0000-000000000001")]
+        if device_ids:
+            devices = device_ids
+        else:
+            # Get first device from DB as default target
+            from app.modules.module1_asset.repository import DeviceRepository
+            from app.core.database.session import async_session_factory
+            async with async_session_factory() as db:
+                repo = DeviceRepository(db)
+                _, rows = await repo.list_devices(1, 1, None, None, None, None)
+                devices = [r.id for r in rows] if rows else []
+        if not devices:
+            return []
         results = []
         for did in devices:
             config_text = "hostname mock-device\n" + "".join(
