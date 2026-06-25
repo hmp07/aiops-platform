@@ -36,8 +36,11 @@ class ZabbixAdapter(BaseAdapter):
             return False
 
     async def get_hosts(self) -> list[dict]:
-        """Fetch all monitored hosts."""
-        return await self._call("host.get", {"output": ["hostid", "host", "name", "status"]})
+        """Fetch all monitored hosts (with interface IPs)."""
+        return await self._call("host.get", {
+            "output": ["hostid", "host", "name", "status"],
+            "selectInterfaces": ["ip", "dns", "type", "main"],
+        })
 
     async def get_triggers(self, min_severity: int = 2) -> list[dict]:
         """Fetch active triggers with severity >= min_severity."""
@@ -56,31 +59,48 @@ class ZabbixAdapter(BaseAdapter):
         })
 
     async def _call(self, method: str, params: dict) -> list[dict]:
-        """Make a JSON-RPC call to Zabbix API."""
+        """Make a JSON-RPC call to Zabbix API.
+
+        Zabbix 7.4+ uses ``Authorization: Bearer <token>`` HTTP header.
+        Older versions put ``auth`` in the JSON-RPC body.  We try the
+        Bearer header first (7.4 style), then fall back to body-auth.
+        """
         if not self._url:
             return []
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(self._url, json={
+            async with httpx.AsyncClient(timeout=30) as client:
+                headers = {"Content-Type": "application/json"}
+                if self._token:
+                    headers["Authorization"] = f"Bearer {self._token}"
+
+                body: dict = {
                     "jsonrpc": "2.0", "method": method,
-                    "params": params, "auth": self._token,
-                    "id": 1,
-                })
+                    "params": params, "id": 1,
+                }
+
+                resp = await client.post(self._url, json=body, headers=headers)
                 data = resp.json()
+
                 if "result" in data:
                     return data["result"]
-                # Login if needed
+
+                # If request failed and we have no token, login first
                 if "error" in data and not self._token:
-                    auth_resp = await client.post(self._url, json={
+                    login_resp = await client.post(self._url, json={
                         "jsonrpc": "2.0", "method": "user.login",
                         "params": {"username": self._user, "password": self._password},
                         "id": 1,
                     })
-                    auth_data = auth_resp.json()
-                    self._token = auth_data.get("result", "")
+                    login_data = login_resp.json()
+                    self._token = login_data.get("result", "")
                     if self._token:
-                        return await self._call(method, params)
+                        # Retry with the new token (Bearer header for 7.4+)
+                        headers["Authorization"] = f"Bearer {self._token}"
+                        retry_resp = await client.post(self._url, json=body, headers=headers)
+                        retry_data = retry_resp.json()
+                        if "result" in retry_data:
+                            return retry_data["result"]
                 return []
         except Exception:
             return []
@@ -92,7 +112,6 @@ class ZabbixAdapter(BaseAdapter):
 
         triggers = await self.get_triggers(min_severity=1)
         hosts = await self.get_hosts()
-        items = await self.get_metrics("", [], 0)  # get metric items
 
         alerts_created = 0
         devices_synced = 0
@@ -100,65 +119,80 @@ class ZabbixAdapter(BaseAdapter):
         if db_session:
             from app.modules.module3_monitoring.models import Alert
             from app.modules.module1_asset.models import Device
+            from sqlalchemy import select
 
             now = datetime.now(timezone.utc)
             severity_map = {0: "info", 1: "info", 2: "warning", 3: "warning", 4: "critical", 5: "critical"}
 
-            # Sync hosts as devices
-            for host in hosts:
-                hostid = host.get("hostid", "")
-                hostname = host.get("host", "")
-                # Check if device already exists
-                from sqlalchemy import select
-                existing = (await db_session.execute(
-                    select(Device).where(Device.device_name == hostname)
-                )).scalar_one_or_none()
-                if not existing:
-                    dev = Device(
-                        id=_uuid.uuid4(), device_name=hostname,
-                        device_type="server", vendor="Zabbix",
-                        model=host.get("name", hostname),
-                        management_ip=host.get("interfaces", [{}])[0].get("ip", "") if host.get("interfaces") else "",
-                        lifecycle_status="in_use",
-                        business_system="Zabbix Monitored",
-                        extra_attrs=host,
-                    )
-                    db_session.add(dev)
-                    devices_synced += 1
+            try:
+                # Sync hosts as devices
+                for host in hosts:
+                    hostid = host.get("hostid", "")
+                    hostname = host.get("host", "")
+                    # Extract primary IP from interfaces
+                    interfaces = host.get("interfaces", [])
+                    primary_ip = None
+                    if interfaces:
+                        main_if = [i for i in interfaces if i.get("main") == "1"]
+                        iface = main_if[0] if main_if else interfaces[0]
+                        ip_val = iface.get("ip", "")
+                        primary_ip = ip_val if ip_val else None
 
-            # Sync triggers as alerts
-            for trigger in triggers:
-                triggerid = trigger.get("triggerid", "")
-                description = trigger.get("description", "")
-                priority = int(trigger.get("priority", 0))
-                host_list = trigger.get("hosts", [])
-                host_name = host_list[0].get("host", "") if host_list else "Unknown"
+                    # Check if device already exists (by hostname)
+                    existing = (await db_session.execute(
+                        select(Device).where(Device.device_name == hostname)
+                    )).scalar_one_or_none()
+                    if not existing:
+                        dev = Device(
+                            id=_uuid.uuid4(), device_name=hostname,
+                            device_type="server", vendor="Zabbix",
+                            model=host.get("name", hostname),
+                            management_ip=primary_ip,
+                            lifecycle_status="in_use",
+                            business_system="Zabbix Monitored",
+                            extra_attrs=host,
+                        )
+                        db_session.add(dev)
+                        devices_synced += 1
 
-                # Find device_id from host
-                existing_dev = (await db_session.execute(
-                    select(Device).where(Device.device_name == host_name)
-                )).scalar_one_or_none()
-                device_id = existing_dev.id if existing_dev else None
+                # Sync triggers as alerts
+                for trigger in triggers:
+                    triggerid = trigger.get("triggerid", "")
+                    description = trigger.get("description", "")
+                    priority = int(trigger.get("priority", 0))
+                    host_list = trigger.get("hosts", [])
+                    host_name = host_list[0].get("host", "") if host_list else "Unknown"
 
-                # Check for existing alert (dedup by triggerid)
-                existing_alert = (await db_session.execute(
-                    select(Alert).where(Alert.description.ilike(f"%zbx:{triggerid}%"))
-                )).scalar_one_or_none()
-                if not existing_alert:
-                    alert = Alert(
-                        id=_uuid.uuid4(), time=now,
-                        device_id=device_id,
-                        severity=severity_map.get(priority, "warning"),
-                        status="triggered",
-                        title=f"[Zabbix] {description}",
-                        description=f"Trigger: {description} on {host_name} (zbx:{triggerid})",
-                        source="zabbix",
-                    )
-                    db_session.add(alert)
-                    alerts_created += 1
+                    # Find device_id from host
+                    existing_dev = (await db_session.execute(
+                        select(Device).where(Device.device_name == host_name)
+                    )).scalar_one_or_none()
+                    device_id = existing_dev.id if existing_dev else None
 
-            if alerts_created > 0 or devices_synced > 0:
-                await db_session.commit()
+                    # Check for existing alert (dedup by triggerid)
+                    existing_alert = (await db_session.execute(
+                        select(Alert).where(Alert.description.ilike(f"%zbx:{triggerid}%"))
+                    )).scalar_one_or_none()
+                    if not existing_alert:
+                        alert = Alert(
+                            id=_uuid.uuid4(), time=now,
+                            device_id=device_id,
+                            severity=severity_map.get(priority, "warning"),
+                            status="triggered",
+                            title=f"[Zabbix] {description}",
+                            description=f"Trigger: {description} on {host_name} (zbx:{triggerid})",
+                            source="zabbix",
+                        )
+                        db_session.add(alert)
+                        alerts_created += 1
+
+                if alerts_created > 0 or devices_synced > 0:
+                    await db_session.commit()
+
+            except Exception:
+                # Rollback on any DB error so the session stays usable
+                await db_session.rollback()
+                raise
 
         return {
             "status": "ok",
