@@ -130,6 +130,70 @@ class ItopAdapter(BaseAdapter):
             for v in objects.values()
         ]
 
+    # ── Dependency Graph ───────────────────────────────────
+
+    async def get_applications_with_fcis(self) -> list[dict]:
+        """Fetch all ApplicationSolutions with functionalcis_list expanded.
+
+        The functionalcis_list contains linked FunctionalCI objects
+        (DatabaseSchema, DBServer, WebServer, WebApplication, etc.)
+        that form the first level of the dependency chain.
+        """
+        result = await self._call({
+            "operation": "core/get",
+            "class": "ApplicationSolution",
+            "key": "SELECT ApplicationSolution",
+            "output_fields": "*",
+            "limit": 100,
+        })
+        return self._parse_objects(result, "ApplicationSolution")
+
+    async def get_fci_detail(self, ci_class: str, ci_id: int) -> dict | None:
+        """Get full detail of a single FunctionalCI by class name + id."""
+        result = await self._call({
+            "operation": "core/get",
+            "class": ci_class,
+            "key": ci_id,
+            "output_fields": "*",
+        })
+        objects = result.get("objects") or {}
+        for v in objects.values():
+            return {**v.get("fields", {}), "ci_class": ci_class, "id": int(v.get("key", 0))}
+        return None
+
+    async def get_all_functional_cis(self) -> list[dict]:
+        """Fetch ALL infrastructure CI objects by querying each subclass.
+
+        Queries each concrete FunctionalCI subclass separately because
+        iTop's abstract FunctionalCI parent class does not return
+        subclass-specific FK fields (dbserver_id, system_id, etc.).
+        """
+        fci_classes = [
+            "Server", "VirtualMachine", "DBServer", "WebServer",
+            "WebApplication", "DatabaseSchema", "Farm", "Hypervisor",
+            "NetworkDevice", "StorageSystem",
+        ]
+        all_cis: list[dict] = []
+        for cls_name in fci_classes:
+            try:
+                result = await self._call({
+                    "operation": "core/get",
+                    "class": cls_name,
+                    "key": f"SELECT {cls_name}",
+                    "output_fields": "*",
+                    "limit": 500,
+                })
+                for v in (result.get("objects") or {}).values():
+                    fields = v.get("fields", {})
+                    all_cis.append({
+                        **fields,
+                        "ci_class": cls_name,
+                        "id": int(v.get("key", 0)),
+                    })
+            except Exception:
+                pass  # skip classes not installed
+        return all_cis
+
     # ── sync ─────────────────────────────────────────────────
 
     async def sync(self, db_session=None) -> dict:
