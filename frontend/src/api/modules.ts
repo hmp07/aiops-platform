@@ -9,6 +9,12 @@ export const deviceApi = {
   delete: (id: string) => client.post(`/devices/${id}/delete`),
 };
 
+// Device Metrics (Zabbix real-time monitoring)
+export const metricsApi = {
+  getDeviceMetrics: (deviceId: string) => client.post(`/devices/${deviceId}/metrics`),
+  getDeviceAlerts: (deviceId: string, params?: any) => client.get(`/devices/${deviceId}/alerts`, { params }),
+};
+
 // M2: IPAM
 export const ipamApi = {
   listSubnets: (params?: any) => client.get("/ipam/subnets", { params }),

@@ -50,12 +50,57 @@ class ZabbixAdapter(BaseAdapter):
             "selectHosts": ["hostid", "host"],
         })
 
-    async def get_metrics(self, host_id: str, item_keys: list[str], limit: int = 10) -> list[dict]:
-        """Fetch recent metric values."""
+    async def get_items(self, hostids: str | list[str], search_keys: list[str] | None = None) -> list[dict]:
+        """Fetch monitored items for a host, optionally filtered by key patterns.
+
+        Maps to ITOps-Watch pattern: ``item.get`` with hostids + search keys.
+        """
+        params: dict = {
+            "output": ["itemid", "hostid", "name", "key_", "lastvalue", "lastclock", "units", "value_type"],
+        }
+        if isinstance(hostids, list):
+            params["hostids"] = hostids
+        else:
+            params["hostids"] = [hostids]
+        if search_keys:
+            params["search"] = {"key_": search_keys}
+            params["searchByAny"] = True
+        return await self._call("item.get", params)
+
+    async def get_history(
+        self, hostids: str | list[str], item_key: str,
+        start_time: int, end_time: int, limit: int = 500,
+    ) -> list[dict]:
+        """Fetch historical data for a specific metric key.
+
+        Two-step ITOps-Watch pattern:
+        1. ``item.get`` with ``search:{key_: item_key}`` → itemids + value_type
+        2. ``history.get`` with those itemids + time range
+        """
+        hostid_list = hostids if isinstance(hostids, list) else [hostids]
+
+        # Step 1: Resolve item key → itemids
+        items = await self._call("item.get", {
+            "output": ["itemid", "value_type"],
+            "hostids": hostid_list,
+            "search": {"key_": item_key},
+        })
+        if not items:
+            return []
+
+        itemids = [i["itemid"] for i in items]
+        value_type = int(items[0].get("value_type", 0))  # 0=float, 3=unsigned
+
+        # Step 2: Fetch history
         return await self._call("history.get", {
             "output": ["itemid", "clock", "value"],
-            "hostids": host_id, "sortfield": "clock",
-            "sortorder": "DESC", "limit": limit,
+            "itemids": itemids,
+            "history": value_type,
+            "time_from": start_time,
+            "time_till": end_time,
+            "sortfield": "clock",
+            "sortorder": "ASC",
+            "limit": limit,
         })
 
     async def _call(self, method: str, params: dict) -> list[dict]:

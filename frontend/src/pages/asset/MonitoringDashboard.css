@@ -1,0 +1,98 @@
+/* ── Self-contained dark monitoring panel (ITOps-Watch style) ── */
+.monitoring-dashboard {
+  --md-bg: #081628;
+  --md-panel: rgba(8, 24, 48, 0.65);
+  --md-border: rgba(0, 229, 255, 0.2);
+  --md-border-active: rgba(0, 229, 255, 0.55);
+  --md-primary: #00e5ff;
+  --md-green: #00ff88;
+  --md-yellow: #ffd700;
+  --md-red: #ff6b6b;
+  --md-text: #e0e6ed;
+  --md-text-dim: #8892a4;
+  --md-font-mono: 'Share Tech Mono', 'Orbitron', 'Consolas', monospace;
+
+  background: var(--md-bg);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 24px;
+  border: 1px solid var(--md-border);
+}
+
+/* ── KPI card ── */
+.monitoring-dashboard .kpi-card {
+  background: var(--md-panel);
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  padding: 16px;
+  height: 100%;
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+.monitoring-dashboard .kpi-card:hover {
+  border-color: var(--md-border-active);
+  box-shadow: 0 0 14px rgba(0, 229, 255, 0.08);
+}
+.monitoring-dashboard .kpi-card .kpi-label {
+  color: var(--md-text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 4px;
+}
+.monitoring-dashboard .kpi-card .kpi-value {
+  font-family: var(--md-font-mono);
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--md-text);
+  line-height: 1.1;
+}
+.monitoring-dashboard .kpi-card .kpi-unit {
+  font-size: 13px;
+  color: var(--md-text-dim);
+  margin-left: 3px;
+  font-family: var(--md-font-mono);
+}
+.monitoring-dashboard .kpi-card .kpi-progress {
+  height: 4px;
+  border-radius: 2px;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.monitoring-dashboard .kpi-card .kpi-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+/* ── Trend chart panel ── */
+.monitoring-dashboard .chart-panel {
+  background: var(--md-panel);
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+.monitoring-dashboard .chart-panel .panel-title {
+  color: var(--md-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.monitoring-dashboard .chart-panel .panel-subtitle {
+  color: var(--md-text-dim);
+  font-size: 10px;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+/* ── Empty state ── */
+.monitoring-dashboard .md-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--md-text-dim);
+}
+.monitoring-dashboard .md-empty .md-empty-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
