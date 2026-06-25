@@ -73,6 +73,21 @@ class ItopAdapter(BaseAdapter):
         result = await self._call(payload)
         return self._parse_objects(result, ci_class)
 
+    async def update_ci(self, ci_class: str, ci_id: int, fields: dict) -> dict:
+        """Update an iTop CI via core/update.
+
+        Used for Zabbix → iTop data enrichment (serial numbers,
+        OS versions, etc. collected by Zabbix monitoring).
+        """
+        payload: dict = {
+            "operation": "core/update",
+            "class": ci_class,
+            "key": ci_id,
+            "fields": fields,
+        }
+        result = await self._call(payload)
+        return result
+
     async def sync(self, db_session=None) -> dict:
         """Sync iTop CIs → AIOps Device records."""
         import uuid as _uuid
@@ -97,11 +112,12 @@ class ItopAdapter(BaseAdapter):
                         ci_id = ci.get("id", "")
                         finalclass = ci.get("finalclass") or ci_class
 
-                        # Dedup by name + extra_attrs.ci_class
+                        ext_id = f"itop:{ci_id}"
+                        # Dedup by external_id (unique across sources), skip soft-deleted
                         existing = (await db_session.execute(
                             select(Device).where(
-                                Device.device_name == name,
-                                Device.extra_attrs["ci_class"].as_string() == ci_class,
+                                Device.extra_attrs["external_id"].as_string() == ext_id,
+                                Device.deleted_at.is_(None),
                             )
                         )).scalar_one_or_none()
 
@@ -120,6 +136,7 @@ class ItopAdapter(BaseAdapter):
                                 user_department=ci.get("organization_name"),
                                 extra_attrs={
                                     "source": "itop",
+                                    "external_id": ext_id,
                                     "ci_class": ci_class,
                                     "ci_id": ci_id,
                                     "finalclass": finalclass,
