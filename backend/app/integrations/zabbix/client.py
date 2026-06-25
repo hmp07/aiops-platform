@@ -53,19 +53,31 @@ class ZabbixAdapter(BaseAdapter):
     async def get_items(self, hostids: str | list[str], search_keys: list[str] | None = None) -> list[dict]:
         """Fetch monitored items for a host, optionally filtered by key patterns.
 
-        Maps to ITOps-Watch pattern: ``item.get`` with hostids + search keys.
+        Fetches all items for the host, then filters in Python using the
+        search_keys patterns (ITOps-Watch approach).  This avoids Zabbix
+        ``search`` parameter quirks across versions (7.0 vs 7.4).
         """
+        hostid_list = hostids if isinstance(hostids, list) else [hostids]
         params: dict = {
             "output": ["itemid", "hostid", "name", "key_", "lastvalue", "lastclock", "units", "value_type"],
+            "hostids": hostid_list,
+            "limit": 50000,
         }
-        if isinstance(hostids, list):
-            params["hostids"] = hostids
-        else:
-            params["hostids"] = [hostids]
+        items = await self._call("item.get", params)
+
         if search_keys:
-            params["search"] = {"key_": search_keys}
-            params["searchByAny"] = True
-        return await self._call("item.get", params)
+            filtered = []
+            for item in items:
+                key = item.get("key_", "")
+                for pattern in search_keys:
+                    # Match prefix (strip everything after '[' for partial match)
+                    clean = pattern.split("[")[0]
+                    if clean in key:
+                        filtered.append(item)
+                        break
+            return filtered
+
+        return items
 
     async def get_history(
         self, hostids: str | list[str], item_key: str,
