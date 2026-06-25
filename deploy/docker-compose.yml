@@ -99,8 +99,10 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+    restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_started
     ports:
       - "80:80"
 
