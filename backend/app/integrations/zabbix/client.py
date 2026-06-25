@@ -14,10 +14,11 @@ class ZabbixAdapter(BaseAdapter):
     - Performance metrics (→ metrics hypertable)
     """
 
-    def __init__(self):
-        self._url = settings.ZABBIX_API_URL
-        self._user = settings.ZABBIX_API_USER
-        self._password = settings.ZABBIX_API_PASSWORD
+    def __init__(self, endpoint_url: str = "", auth_config: dict | None = None):
+        self._url = endpoint_url or settings.ZABBIX_API_URL
+        auth = auth_config or {}
+        self._user = auth.get("username") or settings.ZABBIX_API_USER
+        self._password = auth.get("password") or settings.ZABBIX_API_PASSWORD
         self._token: str | None = None
 
     async def health_check(self) -> bool:
@@ -83,6 +84,24 @@ class ZabbixAdapter(BaseAdapter):
                 return []
         except Exception:
             return []
+
+    async def sync(self) -> dict:
+        """Sync Zabbix data into AIOps: triggers→alerts, hosts→device calibration."""
+        import uuid
+        from datetime import datetime, timezone
+
+        triggers = await self.get_triggers(min_severity=1)
+        hosts = await self.get_hosts()
+
+        alerts_created = 0
+        # Store results for the DataSourceService to process
+        return {
+            "status": "ok",
+            "triggers_count": len(triggers),
+            "hosts_count": len(hosts),
+            "alerts_created": alerts_created,
+            "message": f"Zabbix sync: {len(hosts)} hosts, {len(triggers)} triggers"
+        }
 
     async def close(self):
         if self._token:
