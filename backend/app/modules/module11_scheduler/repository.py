@@ -12,8 +12,12 @@ class DataSourceRepository:
     async def list_all(self) -> list[DataSource]:
         q = select(DataSource).order_by(DataSource.created_at.desc())
         rows = (await self._s.execute(q)).scalars().all(); return list(rows)
+    # Keys that are allowed to be set to None (nullable columns)
+    _NULLABLE_KEYS = {"last_error", "last_sync_at", "description"}
+
     async def update(self, obj: DataSource, data: dict) -> DataSource:
         for k, v in data.items():
-            if v is not None: setattr(obj, k, v)
+            if v is not None or k in self._NULLABLE_KEYS:
+                setattr(obj, k, v)
         await self._s.commit(); await self._s.refresh(obj); return obj
     async def delete(self, obj: DataSource): await self._s.delete(obj); await self._s.commit()
