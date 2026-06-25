@@ -92,6 +92,7 @@ const menuItems = [
     icon: <SettingOutlined />,
     label: "系统管理",
     children: [
+      { key: "/admin/datasources", label: "数据源管理" },
       { key: "/admin/users", label: "用户管理" },
       { key: "/admin/audit", label: "审计日志" },
     ],

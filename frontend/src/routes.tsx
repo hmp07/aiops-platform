@@ -16,6 +16,7 @@ import AIChatPage from "./pages/ai/AIChatPage";
 import InspectionPage from "./pages/ai/InspectionPage";
 import UserManagementPage from "./pages/platform/UserManagementPage";
 import AuditLogPage from "./pages/platform/AuditLogPage";
+import DataSourcePage from "./pages/platform/DataSourcePage";
 
 export const routes: RouteObject[] = [
   { path: "/login", element: <LoginPage /> },
@@ -38,6 +39,7 @@ export const routes: RouteObject[] = [
       { path: "ai/chat", element: <AIChatPage /> },
       { path: "ai/inspection", element: <InspectionPage /> },
       { path: "admin/users", element: <UserManagementPage /> },
+      { path: "admin/datasources", element: <DataSourcePage /> },
       { path: "admin/audit", element: <AuditLogPage /> },
     ],
   },
