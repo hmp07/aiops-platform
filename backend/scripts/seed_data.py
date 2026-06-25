@@ -148,10 +148,11 @@ async def seed():
     print(f"Seeded {len(SERVICES)} services + 7 edges")
 
     # Seed knowledge articles
+    import json
     for a in ARTICLES:
         await conn.execute(
-            "INSERT INTO knowledge_articles (id, title, article_type, content, tags, source, status, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-            uuid.uuid4(), a[0], a[1], a[2], a[3], "manual", "published", "admin")
+            "INSERT INTO knowledge_articles (id, title, article_type, content, tags, source, status, created_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)",
+            uuid.uuid4(), a[0], a[1], a[2], json.dumps(a[3]), "manual", "published", "admin")
     print(f"Seeded {len(ARTICLES)} articles")
 
     # Seed notification channel
