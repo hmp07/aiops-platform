@@ -11,10 +11,10 @@ const statusLabel: Record<string, string> = { triggered: "待处理", acknowledg
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { data: alerts } = useQuery({ queryKey: ["alerts"], queryFn: () => client.get("/alerts?page_size=100").then(r => r.data) });
-  const { data: devices } = useQuery({ queryKey: ["devices"], queryFn: () => client.get("/devices?page_size=5").then(r => r.data) });
-  const { data: stats } = useQuery({ queryKey: ["alert-stats"], queryFn: () => client.get("/alerts/stats").then(r => r.data) });
-  const { data: services } = useQuery({ queryKey: ["services"], queryFn: () => client.get("/apm/services").then(r => r.data) });
+  const { data: alerts } = useQuery({ queryKey: ["alerts", "dashboard"], queryFn: () => client.get("/alerts?page_size=100").then(r => r.data) });
+  const { data: devices } = useQuery({ queryKey: ["devices", "dashboard"], queryFn: () => client.get("/devices?page_size=5").then(r => r.data) });
+  const { data: stats } = useQuery({ queryKey: ["alert-stats", "dashboard"], queryFn: () => client.get("/alerts/stats").then(r => r.data) });
+  const { data: services } = useQuery({ queryKey: ["services", "dashboard"], queryFn: () => client.get("/apm/services").then(r => r.data) });
 
   const alertColumns = [
     { title: "标题", dataIndex: "title", key: "title", ellipsis: true, render: (t: string, r: any) => <a onClick={() => navigate(`/monitoring/alerts/${r.id}`)}>{t}</a> },
