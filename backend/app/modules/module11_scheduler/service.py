@@ -61,7 +61,7 @@ class DataSourceService:
         if not adapter: return {"status": "error", "message": f"Unknown type: {obj.source_type}"}
         try:
             result = await adapter.sync(db_session)
-            await self._repo.update(obj, {"status": "connected", "last_sync_at": datetime.now(timezone.utc)})
+            await self._repo.update(obj, {"status": "connected", "last_sync_at": datetime.now(timezone.utc), "last_error": None})
             return {"status": "ok", **result}
         except Exception as e:
             await self._repo.update(obj, {"status": "error", "last_error": str(e)[:500]})
