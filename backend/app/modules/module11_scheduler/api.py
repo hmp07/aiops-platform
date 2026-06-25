@@ -117,6 +117,7 @@ async def test_datasource(ds_id: UUID, current_user: dict = Depends(get_current_
 @ds_router.post("/{ds_id}/sync")
 @require_permission("platform:task:manage")
 async def sync_datasource(ds_id: UUID, current_user: dict = Depends(get_current_user),
-                          svc: DataSourceService = Depends(_get_ds_svc)):
-    result = await svc.sync(ds_id)
+                          svc: DataSourceService = Depends(_get_ds_svc),
+                          db: AsyncSession = Depends(get_db)):
+    result = await svc.sync(ds_id, db)
     return result

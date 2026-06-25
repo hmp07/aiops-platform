@@ -54,13 +54,13 @@ class DataSourceService:
             await self._repo.update(obj, {"status": "error", "last_error": str(e)[:500]})
             return {"status": "error", "message": str(e)[:200]}
 
-    async def sync(self, ds_id: UUID) -> dict:
+    async def sync(self, ds_id: UUID, db_session=None) -> dict:
         obj = await self._repo.get_by_id(ds_id)
         if not obj: raise NotFoundError("Data source not found")
         adapter = self._get_adapter(obj)
         if not adapter: return {"status": "error", "message": f"Unknown type: {obj.source_type}"}
         try:
-            result = await adapter.sync()
+            result = await adapter.sync(db_session)
             await self._repo.update(obj, {"status": "connected", "last_sync_at": datetime.now(timezone.utc)})
             return {"status": "ok", **result}
         except Exception as e:

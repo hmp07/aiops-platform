@@ -85,22 +85,88 @@ class ZabbixAdapter(BaseAdapter):
         except Exception:
             return []
 
-    async def sync(self) -> dict:
-        """Sync Zabbix data into AIOps: triggers→alerts, hosts→device calibration."""
-        import uuid
+    async def sync(self, db_session=None) -> dict:
+        """Sync Zabbix data into AIOps: triggers→alerts, hosts→devices."""
+        import uuid as _uuid
         from datetime import datetime, timezone
 
         triggers = await self.get_triggers(min_severity=1)
         hosts = await self.get_hosts()
+        items = await self.get_metrics("", [], 0)  # get metric items
 
         alerts_created = 0
-        # Store results for the DataSourceService to process
+        devices_synced = 0
+
+        if db_session:
+            from app.modules.module3_monitoring.models import Alert
+            from app.modules.module1_asset.models import Device
+
+            now = datetime.now(timezone.utc)
+            severity_map = {0: "info", 1: "info", 2: "warning", 3: "warning", 4: "critical", 5: "critical"}
+
+            # Sync hosts as devices
+            for host in hosts:
+                hostid = host.get("hostid", "")
+                hostname = host.get("host", "")
+                # Check if device already exists
+                from sqlalchemy import select
+                existing = (await db_session.execute(
+                    select(Device).where(Device.device_name == hostname)
+                )).scalar_one_or_none()
+                if not existing:
+                    dev = Device(
+                        id=_uuid.uuid4(), device_name=hostname,
+                        device_type="server", vendor="Zabbix",
+                        model=host.get("name", hostname),
+                        management_ip=host.get("interfaces", [{}])[0].get("ip", "") if host.get("interfaces") else "",
+                        lifecycle_status="in_use",
+                        business_system="Zabbix Monitored",
+                        extra_attrs=host,
+                    )
+                    db_session.add(dev)
+                    devices_synced += 1
+
+            # Sync triggers as alerts
+            for trigger in triggers:
+                triggerid = trigger.get("triggerid", "")
+                description = trigger.get("description", "")
+                priority = int(trigger.get("priority", 0))
+                host_list = trigger.get("hosts", [])
+                host_name = host_list[0].get("host", "") if host_list else "Unknown"
+
+                # Find device_id from host
+                existing_dev = (await db_session.execute(
+                    select(Device).where(Device.device_name == host_name)
+                )).scalar_one_or_none()
+                device_id = existing_dev.id if existing_dev else None
+
+                # Check for existing alert (dedup by triggerid)
+                existing_alert = (await db_session.execute(
+                    select(Alert).where(Alert.description.ilike(f"%zbx:{triggerid}%"))
+                )).scalar_one_or_none()
+                if not existing_alert:
+                    alert = Alert(
+                        id=_uuid.uuid4(), time=now,
+                        device_id=device_id,
+                        severity=severity_map.get(priority, "warning"),
+                        status="triggered",
+                        title=f"[Zabbix] {description}",
+                        description=f"Trigger: {description} on {host_name} (zbx:{triggerid})",
+                        source="zabbix",
+                    )
+                    db_session.add(alert)
+                    alerts_created += 1
+
+            if alerts_created > 0 or devices_synced > 0:
+                await db_session.commit()
+
         return {
             "status": "ok",
             "triggers_count": len(triggers),
             "hosts_count": len(hosts),
+            "devices_synced": devices_synced,
             "alerts_created": alerts_created,
-            "message": f"Zabbix sync: {len(hosts)} hosts, {len(triggers)} triggers"
+            "message": f"Synced {devices_synced} devices, {alerts_created} alerts from {len(hosts)} hosts, {len(triggers)} triggers"
         }
 
     async def close(self):
