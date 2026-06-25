@@ -16,7 +16,7 @@ export default function SubnetTreePage() {
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={8}><Card size="small"><Statistic title="子网数" value={data?.total || 0} /></Card></Col>
         <Col span={8}><Card size="small"><Statistic title="IP分配" value={allocs?.total || 0} /></Card></Col>
-        <Col span={8}><Card size="small"><Button type="primary" onClick={() => setOpen(true)}>新增子网</Button></Col>
+        <Col span={8}><Card size="small"><Button type="primary" onClick={() => setOpen(true)}>新增子网</Button></Card></Col>
       </Row>
       <Card title="子网列表">
         {(data?.items || []).map((s: any) => (
@@ -30,7 +30,7 @@ export default function SubnetTreePage() {
         ))}
       </Card>
       <Card title="IP 分配" style={{ marginTop: 16 }}>
-        <Table dataSource={allcs?.items || []} rowKey="id" loading={isLoading} size="small" pagination={false}
+        <Table dataSource={allocs?.items || []} rowKey="id" loading={isLoading} size="small" pagination={false}
           columns={[
             { title: "IP", dataIndex: "ip_address" },
             { title: "状态", dataIndex: "status", render: (s: string) => <Tag color={s==="allocated"?"blue":s==="reserved"?"orange":"default"}>{s}</Tag> },
