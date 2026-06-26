@@ -109,49 +109,35 @@ async def get_all_permissions():
     }
 
 
-# ---- Builtin Tools & Skills Registration ----
+# ---- Builtin Tools & Skills Registration (module8_aiops) ----
 def _register_builtin_tools():
-    from app.modules.module8_ai.tools.registry import ToolRegistry
-    from app.modules.module8_ai.tools.builtin.query_device import QueryDeviceTool
-    from app.modules.module8_ai.tools.builtin.query_alert import QueryAlertTool
-    from app.modules.module8_ai.tools.builtin.query_knowledge import QueryKnowledgeTool
-
-    registry = ToolRegistry.get_instance()
-    registry.register(QueryDeviceTool())
-    registry.register(QueryAlertTool())
-    registry.register(QueryKnowledgeTool())
-    logger.info(f"Registered {len(registry.list_tools())} builtin tools")
+    # Tools are now defined inline in api.py (sxdevops pattern)
+    logger.info("AIOps tools ready (inline in api.py)")
 
 
 async def _init_builtin_skills():
-    from app.modules.module8_ai.repository import SkillRepository
-    from app.modules.module8_ai.service import SkillService
-    from app.core.database.session import async_session_factory
-
-    async with async_session_factory() as db:
-        svc = SkillService(SkillRepository(db))
-        await svc.ensure_builtin_skills()
-        skills = await svc.list_skills()
-        logger.info(f"Initialized {len(skills)} builtin skills")
+    # Skills are managed via AIOpsSkill model in module8_aiops
+    logger.info("AIOps skills ready (managed via admin API)")
 
 
 # ---- Router Registration ----
 from app.modules.module9_platform.api import router as platform_router
 from app.modules.module10_eventwall.api import router as eventwall_router
-from app.modules.module8_ai.api import router as ai_router
+from app.modules.module8_aiops.api import router as aiops_router
 from app.modules.module1_asset.api import router as asset_router, cal_router as asset_cal_router
 from app.modules.module2_ipam.api import router as ipam_router
 from app.modules.module5_config.api import router as config_router
 from app.modules.module3_monitoring.api import router as alert_router, rule_router, notif_router
 from app.modules.module6_apm.api import router as apm_router
 from app.modules.module7_knowledge.api import router as knowledge_router
+# kg_router kept from module8_ai for now (knowledge_graph is standalone)
 from app.modules.module8_ai.knowledge_graph.api import router as kg_router
 from app.modules.module4_log.api import router as log_router
 from app.modules.module11_scheduler.api import router as scheduler_router, ds_router
 
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(eventwall_router, prefix="/api/v1")
-app.include_router(ai_router, prefix="/api/v1")
+app.include_router(aiops_router, prefix="/api/v1")
 app.include_router(asset_router, prefix="/api/v1")
 app.include_router(asset_cal_router, prefix="/api/v1")
 app.include_router(ipam_router, prefix="/api/v1")
