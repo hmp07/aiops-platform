@@ -185,6 +185,177 @@ async def update_skill(
 
 
 # ============================================================
+# Model Providers
+# ============================================================
+
+@router.get("/models")
+async def list_model_providers(
+    _: dict = Depends(get_current_user),
+):
+    """List configured LLM model providers."""
+    from app.core.database.session import async_session_factory
+    from app.modules.module8_ai.models import ModelProvider
+    from sqlalchemy import select
+
+    async with async_session_factory() as db:
+        rows = (await db.execute(
+            select(ModelProvider).order_by(ModelProvider.created_at.desc())
+        )).scalars().all()
+        return {
+            "total": len(rows),
+            "items": [
+                {"id": str(r.id), "name": r.name, "provider_type": r.provider_type,
+                 "base_url": r.base_url, "default_model": r.default_model,
+                 "backup_model": r.backup_model, "models_list": r.models_list,
+                 "is_enabled": r.is_enabled, "created_at": r.created_at.isoformat()}
+                for r in rows
+            ],
+        }
+
+
+def _validate_base_url(url: str) -> bool:
+    """Reject private/loopback/link-local URLs to prevent SSRF."""
+    from urllib.parse import urlparse
+    import ipaddress, socket
+
+    host = urlparse(url).hostname
+    if not host:
+        return False
+    try:
+        for addr in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(addr[4][0])
+            if ip.is_loopback or ip.is_private or ip.is_link_local:
+                return False
+    except socket.gaierror:
+        return False
+    return True
+
+
+@router.post("/models", status_code=201)
+async def create_model_provider(
+    body: dict,
+    _: dict = Depends(get_current_user),
+):
+    """Add a new LLM provider configuration."""
+    from app.core.database.session import async_session_factory
+    from app.modules.module8_ai.models import ModelProvider
+
+    if not _validate_base_url(body.get("base_url", "")):
+        return {"status": "error", "message": "Invalid or unsafe base_url"}
+
+    async with async_session_factory() as db:
+        obj = ModelProvider(
+            name=body["name"],
+            provider_type=body.get("provider_type", "openai_compatible"),
+            base_url=body["base_url"],
+            api_key_encrypted=body.get("api_key_encrypted", ""),
+            default_model=body.get("default_model", ""),
+            backup_model=body.get("backup_model"),
+            models_list=body.get("models_list", []),
+            input_price=body.get("input_price", 0.0),
+            output_price=body.get("output_price", 0.0),
+        )
+        db.add(obj)
+        await db.commit()
+        await db.refresh(obj)
+        return {"id": str(obj.id), "name": obj.name, "status": "created"}
+
+
+@router.post("/models/{provider_id}/test")
+async def test_model_provider(
+    provider_id: UUID,
+    _: dict = Depends(get_current_user),
+):
+    """Test connectivity to a model provider."""
+    from app.core.database.session import async_session_factory
+    from app.modules.module8_ai.models import ModelProvider
+    from app.modules.module8_ai.llm.providers import create_provider_from_config
+    from sqlalchemy import select
+
+    async with async_session_factory() as db:
+        row = (await db.execute(
+            select(ModelProvider).where(ModelProvider.id == provider_id)
+        )).scalar_one_or_none()
+        if not row:
+            return {"status": "error", "message": "Provider not found"}
+
+        provider = create_provider_from_config({
+            "provider_type": row.provider_type,
+            "base_url": row.base_url,
+            "api_key_encrypted": row.api_key_encrypted,
+            "default_model": row.default_model,
+            "input_price": row.input_price,
+            "output_price": row.output_price,
+        })
+        ok = await provider.health_check()
+        return {"status": "ok" if ok else "error",
+                "message": "Ping successful" if ok else "Connection failed"}
+
+
+@router.post("/models/{provider_id}/delete")
+async def delete_model_provider(
+    provider_id: UUID,
+    _: dict = Depends(get_current_user),
+):
+    """Delete a model provider configuration."""
+    from app.core.database.session import async_session_factory
+    from app.modules.module8_ai.models import ModelProvider
+    from sqlalchemy import select
+
+    async with async_session_factory() as db:
+        row = (await db.execute(
+            select(ModelProvider).where(ModelProvider.id == provider_id)
+        )).scalar_one_or_none()
+        if not row:
+            return {"status": "error", "message": "Not found"}
+        await db.delete(row)
+        await db.commit()
+        return {"status": "deleted"}
+
+
+# ============================================================
+# Provider Presets (built-in model provider templates)
+# ============================================================
+
+@router.get("/models/presets")
+async def list_presets(_: dict = Depends(get_current_user)):
+    """List built-in model provider presets."""
+    from app.modules.module8_ai.llm.providers import PROVIDER_PRESETS
+
+    return {
+        "presets": [
+            {"type": k, "base_url": v["base_url"], "default_model": v["default_model"],
+             "models": v["models"], "input_price": v["input_price"], "output_price": v["output_price"]}
+            for k, v in PROVIDER_PRESETS.items()
+        ],
+    }
+
+
+# ============================================================
+# Agent Profiles
+# ============================================================
+
+@router.get("/agents")
+async def list_agent_profiles(_: dict = Depends(get_current_user)):
+    from app.core.database.session import async_session_factory
+    from app.modules.module8_ai.models import AgentProfile
+    from sqlalchemy import select
+
+    async with async_session_factory() as db:
+        rows = (await db.execute(
+            select(AgentProfile).where(AgentProfile.is_enabled == True)
+        )).scalars().all()
+        return {
+            "items": [
+                {"agent_id": r.agent_id, "name": r.name, "description": r.description,
+                 "allowed_skills": r.allowed_skills, "default_mode": r.default_mode,
+                 "icon": r.icon, "suggested_questions": r.suggested_questions}
+                for r in rows
+            ],
+        }
+
+
+# ============================================================
 # Audit
 # ============================================================
 

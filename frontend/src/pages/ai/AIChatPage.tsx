@@ -1,110 +1,129 @@
-import { useState, useRef, useEffect } from "react";
-import { Card, Input, Button, Space, Typography, Tag, Spin, List, message, Divider } from "antd";
-import { SendOutlined, RobotOutlined, UserOutlined, ThunderboltOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Card, Input, Button, Space, Typography, Tag, Spin, List, message, Popconfirm } from "antd";
+import { SendOutlined, RobotOutlined, UserOutlined, PlusOutlined, DeleteOutlined, LoadingOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import client from "../../api/client";
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
-interface Message { role: "user" | "ai"; content: string; cardType?: string; }
+interface Message {
+  id?: string; role: "user" | "ai"; content: string;
+  processing_status?: string; blocks?: any; citations?: any;
+}
 interface Session { id: string; title: string; message_count: number; }
-
-const suggestions = [
-  "支付服务最近1小时有异常吗？", "CORE-SW-01的CPU为什么这么高？",
-  "最近有哪些配置变更？", "数据库慢查询影响了哪些业务？",
-  "当前网络拓扑健康状态怎么样？",
-];
 
 export default function AIChatPage() {
   const [messages, setMessages] = useState<Message[]>([{
-    role: "ai",
-    content: "您好！我是 AIOps 智能运维助手。我可以帮您分析告警根因、查询设备状态、评估变更风险。请尝试以下问题或直接输入：",
+    role: "ai", content: "您好！我是 AIOps 智能运维助手。请提出您的运维问题。",
   }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const token = localStorage.getItem("demo_token") || "";
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { loadSessions(); }, []);
+  useEffect(() => () => { if (pollingRef.current) clearInterval(pollingRef.current); }, []);
 
-  useEffect(() => {
-    client.get("/ai/sessions").then(r => setSessions(r.data.items || [])).catch(() => {});
-  }, []);
+  const loadSessions = async () => {
+    try { const r = await client.get("/aiops/sessions"); setSessions(r.data.items || []); } catch {}
+  };
 
   const createSession = async () => {
     try {
-      const r = await client.post("/ai/sessions", { title: "New Chat" });
+      const r = await client.post("/aiops/sessions", { title: "New Chat" });
       setSessions(prev => [r.data, ...prev]);
-      setActiveSessionId(r.data.id);
-      setMessages([{ role: "ai", content: "新会话已创建。请提出您的运维问题。" }]);
+      selectSession(r.data.id);
     } catch { message.error("创建会话失败"); }
   };
 
-  const handleSend = async (text?: string) => {
-    const q = text || input;
-    if (!q.trim() || loading) return;
-    if (!activeSessionId) {
-      try {
-        const r = await client.post("/ai/sessions", { title: q.slice(0, 50) });
-        setActiveSessionId(r.data.id);
-      } catch { message.error("创建会话失败"); return; }
-    }
+  const selectSession = async (sid: string) => {
+    stopPolling();
+    setActiveSessionId(sid);
+    try {
+      const r = await client.get(`/aiops/sessions/${sid}/messages`);
+      const msgs = (r.data.items || []).map((m: any) => ({
+        id: m.id, role: m.role === "assistant" ? "ai" as const : "user" as const,
+        content: m.content || "", processing_status: m.processing_status,
+        blocks: m.blocks, citations: m.citations,
+      }));
+      setMessages(msgs.length > 0 ? msgs : [{ role: "ai", content: "会话已加载。" }]);
+    } catch { setMessages([{ role: "ai", content: "加载失败" }]); }
+  };
 
-    setMessages(prev => [...prev, { role: "user", content: q }]);
-    setInput("");
-    setLoading(true);
-    const sid = activeSessionId;
+  const deleteSession = async (sid: string) => {
+    try {
+      await client.post(`/aiops/sessions/${sid}/delete_session`);
+      setSessions(prev => prev.filter(s => s.id !== sid));
+      if (activeSessionId === sid) { setActiveSessionId(null); setMessages([{ role: "ai", content: "会话已删除。请新建会话。" }]); }
+    } catch { message.error("删除失败"); }
+  };
+
+  const stopPolling = () => {
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+  };
+
+  const startPolling = (sid: string, msgId: string) => {
+    stopPolling();
+    let attempts = 0;
+    pollingRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await client.get(`/aiops/sessions/${sid}/messages`);
+        const items: any[] = r.data.items || [];
+        const msgs = items.map((m: any) => ({
+          id: m.id, role: m.role === "assistant" ? "ai" as const : "user" as const,
+          content: m.content || "", processing_status: m.processing_status,
+        }));
+        setMessages(msgs);
+        const last = items[items.length - 1];
+        if (last && last.role === "assistant" && last.processing_status !== "pending" && last.processing_status !== "running") {
+          stopPolling();
+          setSending(false);
+          loadSessions();
+        }
+        if (attempts > 60) { stopPolling(); setSending(false); }
+      } catch { stopPolling(); setSending(false); }
+    }, 1500);
+  };
+
+  const handleSend = useCallback(async (text?: string) => {
+    const q = (text || input).trim();
+    if (!q || sending) return;
+    let sid: string = activeSessionId || "";
+    if (!sid) {
+      try { const r = await client.post("/aiops/sessions", { title: q.slice(0, 50) }); sid = r.data.id; setActiveSessionId(sid); setSessions(prev => [r.data, ...prev]); }
+      catch { message.error("创建会话失败"); return; }
+    }
+    if (!sid) return;
+    setMessages(prev => [...prev, { role: "user", content: q }, { role: "ai", content: "", processing_status: "pending" }]);
+    setInput(""); setSending(true);
 
     try {
-      const resp = await fetch(`/api/v1/ai/sessions/${sid}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ content: q }),
-      });
-      const reader = resp.body?.getReader();
-      const decoder = new TextDecoder();
-      let aiContent = "";
-      setMessages(prev => [...prev, { role: "ai", content: "" }]);
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n").filter(l => l.startsWith("data: "));
-          for (const line of lines) {
-            const data = line.slice(6);
-            if (data === "[DONE]") break;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.content) {
-                aiContent += parsed.content;
-              } else if (parsed.card_type) {
-                aiContent += `\n\n**[${parsed.card_type}]** ${parsed.data?.text || JSON.stringify(parsed.data)?.slice(0, 200)}`;
-              }
-              setMessages(prev => { const copy = [...prev]; copy[copy.length - 1] = { role: "ai", content: aiContent }; return copy; });
-            } catch {}
-          }
-        }
-      }
-    } catch {
-      setMessages(prev => [...prev, { role: "ai", content: "AI 服务暂时不可用，请稍后再试。" }]);
-    } finally {
-      setLoading(false);
-    }
-  };
+      await client.post(`/aiops/sessions/${sid}/send_message_async`, { content: q });
+      // Trigger execution (blocks until done)
+      client.post(`/aiops/sessions/${sid}/execute_pending`, {}, { timeout: 60000 }).catch(() => {});
+      // Start polling
+      startPolling(sid, "");
+    } catch { setSending(false); message.error("发送失败"); }
+  }, [input, activeSessionId, sending]);
 
   return (
     <div style={{ display: "flex", gap: 16, height: "calc(100vh - 140px)" }}>
       {/* Session Sidebar */}
       <Card size="small" style={{ width: 220, overflow: "auto" }} title={
-        <Space><Button type="primary" size="small" icon={<PlusOutlined />} onClick={createSession}>新建</Button></Space>
+        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={createSession} block>新建会话</Button>
       }>
-        <List dataSource={sessions} renderItem={(s: Session) => (
-          <List.Item onClick={() => { setActiveSessionId(s.id); setMessages([{ role: "ai", content: "会话已加载。" }]); }} style={{ cursor: "pointer", background: activeSessionId === s.id ? "#e6f4ff" : undefined }}>
-            <Text ellipsis style={{ fontSize: 13 }}>{s.title}</Text>
+        <List dataSource={sessions} locale={{ emptyText: "暂无会话" }} renderItem={(s: Session) => (
+          <List.Item
+            onClick={() => selectSession(s.id!)}
+            style={{ cursor: "pointer", background: activeSessionId === s.id ? "#e6f4ff" : undefined, padding: "6px 8px", borderRadius: 6 }}
+            actions={[<Popconfirm key="del" title="删除?" onConfirm={() => deleteSession(s.id)}><DeleteOutlined style={{ fontSize: 12, color: "#999" }} /></Popconfirm>]}
+          >
+            <Text ellipsis style={{ fontSize: 13, flex: 1 }}>{s.title || "New Chat"}</Text>
           </List.Item>
         )} />
       </Card>
@@ -116,24 +135,25 @@ export default function AIChatPage() {
             <div key={i} style={{ marginBottom: 12, display: "flex", gap: 10, justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
               {m.role === "ai" && <RobotOutlined style={{ fontSize: 18, color: "#1677ff", marginTop: 4 }} />}
               <div style={{ maxWidth: "80%", padding: "10px 14px", borderRadius: 10, background: m.role === "user" ? "#1677ff" : "#f5f5f5", color: m.role === "user" ? "#fff" : "inherit" }}>
-                {m.role === "ai" ? <ReactMarkdown>{m.content}</ReactMarkdown> : <Text style={{ color: "#fff" }}>{m.content}</Text>}
+                {m.processing_status === "pending" || m.processing_status === "running" ? (
+                  <Space><LoadingOutlined /><Text type="secondary">AI 分析中...</Text></Space>
+                ) : m.role === "ai" ? (
+                  m.content ? <ReactMarkdown>{m.content}</ReactMarkdown> : <Text type="secondary">...</Text>
+                ) : (
+                  <Text style={{ color: "#fff" }}>{m.content}</Text>
+                )}
               </div>
               {m.role === "user" && <UserOutlined style={{ fontSize: 18, color: "#1677ff", marginTop: 4 }} />}
             </div>
           ))}
-          {loading && <Spin tip="AI 分析中..." />}
           <div ref={bottomRef} />
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          {suggestions.map(s => <Tag key={s} color="blue" style={{ cursor: "pointer", marginBottom: 4 }} onClick={() => handleSend(s)}>{s}</Tag>)}
         </div>
 
         <Space.Compact style={{ width: "100%" }}>
           <Input.TextArea value={input} onChange={e => setInput(e.target.value)}
             onPressEnter={e => { e.preventDefault(); handleSend(); }}
-            placeholder="输入运维问题..." autoSize={{ minRows: 1, maxRows: 4 }} disabled={loading} />
-          <Button type="primary" icon={<SendOutlined />} onClick={() => handleSend()} loading={loading}>发送</Button>
+            placeholder="输入运维问题..." autoSize={{ minRows: 1, maxRows: 4 }} disabled={sending} />
+          <Button type="primary" icon={<SendOutlined />} onClick={() => handleSend()} loading={sending}>发送</Button>
         </Space.Compact>
       </Card>
     </div>
