@@ -187,9 +187,88 @@ async def bootstrap_payload_for_user(db: AsyncSession, user: dict) -> dict:
             }
         ],
         "active_skills": [],
-        "action_registry": [],
-        "action_registry_summary": None,
+        "action_registry": list_action_registry(),
+        "action_registry_summary": build_action_registry_summary(),
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Action Registry
+# ═══════════════════════════════════════════════════════════════
+
+
+def list_action_registry(user: dict | None = None, include_unavailable: bool = True) -> list[dict]:
+    """Return the full action registry (sxdevops pattern).
+
+    Each action maps to a handler and describes what it does.
+    """
+    from app.modules.module8_aiops.action_handlers import HANDLERS, handler_for_action
+
+    actions = []
+    for code, handler in HANDLERS.items():
+        h = handler_for_action(code)
+        actions.append({
+            "code": code,
+            "display_name": _action_display_name(code),
+            "page_prefixes": h.page_prefixes if h else [],
+            "keywords": h.keywords[:5] if h else [],
+            "agent_mode": "direct",
+            "agent_mode_display": "直接执行",
+            "risk_level": "read_only",
+            "risk_level_display": "只读",
+            "skills": [],
+            "enabled_tools": _action_default_tools(code),
+            "description": _action_description(code),
+        })
+    return actions
+
+
+def build_action_registry_summary(actions: list[dict] | None = None) -> dict:
+    """Aggregated summary of all actions."""
+    if actions is None:
+        actions = list_action_registry()
+    return {
+        "total": len(actions),
+        "by_risk": {
+            "read_only": len([a for a in actions if a.get("risk_level") == "read_only"]),
+        },
+    }
+
+
+def _action_display_name(code: str) -> str:
+    names = {
+        "device.query": "设备查询",
+        "alert.root_cause": "告警根因分析",
+        "log.query": "日志查询",
+        "topology.analyze": "拓扑分析",
+        "knowledge.search": "知识搜索",
+        "config.review": "配置审查",
+    }
+    return names.get(code, code)
+
+
+def _action_default_tools(code: str) -> list[str]:
+    tools = {
+        "device.query": ["aiops.query_devices", "aiops.query_ipam"],
+        "alert.root_cause": ["aiops.query_alerts", "aiops.query_devices"],
+        "log.query": ["aiops.query_logs"],
+        "topology.analyze": ["aiops.query_topology", "aiops.query_devices"],
+        "knowledge.search": ["aiops.query_knowledge"],
+        "config.review": ["aiops.query_devices"],
+    }
+    return tools.get(code, [])
+
+
+def _action_description(code: str) -> str:
+    descriptions = {
+        "device.query": "查询设备资产信息，包括设备类型、厂商、IP地址和状态。",
+        "alert.root_cause": "分析告警根因，结合设备信息和告警历史给出可能原因。",
+        "log.query": "查询日志条目，支持按级别、来源和关键字过滤。",
+        "topology.analyze": "分析服务拓扑和依赖关系图。",
+        "knowledge.search": "搜索知识库中的文章、SOP和Runbook。",
+        "config.review": "审查设备配置变更和备份状态。",
+    }
+    return descriptions.get(code, "")
 
 
 # ═══════════════════════════════════════════════════════════════
