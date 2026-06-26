@@ -213,6 +213,24 @@ async def list_model_providers(
         }
 
 
+def _validate_base_url(url: str) -> bool:
+    """Reject private/loopback/link-local URLs to prevent SSRF."""
+    from urllib.parse import urlparse
+    import ipaddress, socket
+
+    host = urlparse(url).hostname
+    if not host:
+        return False
+    try:
+        for addr in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(addr[4][0])
+            if ip.is_loopback or ip.is_private or ip.is_link_local:
+                return False
+    except socket.gaierror:
+        return False
+    return True
+
+
 @router.post("/models", status_code=201)
 async def create_model_provider(
     body: dict,
@@ -221,6 +239,9 @@ async def create_model_provider(
     """Add a new LLM provider configuration."""
     from app.core.database.session import async_session_factory
     from app.modules.module8_ai.models import ModelProvider
+
+    if not _validate_base_url(body.get("base_url", "")):
+        return {"status": "error", "message": "Invalid or unsafe base_url"}
 
     async with async_session_factory() as db:
         obj = ModelProvider(

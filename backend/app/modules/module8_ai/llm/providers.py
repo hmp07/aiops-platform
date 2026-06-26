@@ -108,7 +108,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         if stream:
             body["stream"] = True
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
             resp = await client.post(
                 f"{self.base_url}/chat/completions", json=body, headers=headers,
             )
