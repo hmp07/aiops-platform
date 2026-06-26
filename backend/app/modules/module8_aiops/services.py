@@ -214,10 +214,30 @@ def _register_builtin_mcp_tools():
         TOOL_DEFINITION as ALERT_TOOL,
         execute as execute_query_alerts,
     )
+    from app.modules.module8_aiops.tools.builtin.query_knowledge import (
+        TOOL_DEFINITION as KNOWLEDGE_TOOL,
+        execute as execute_query_knowledge,
+    )
+    from app.modules.module8_aiops.tools.builtin.query_ipam import (
+        TOOL_DEFINITION as IPAM_TOOL,
+        execute as execute_query_ipam,
+    )
+    from app.modules.module8_aiops.tools.builtin.query_topology import (
+        TOOL_DEFINITION as TOPOLOGY_TOOL,
+        execute as execute_query_topology,
+    )
+    from app.modules.module8_aiops.tools.builtin.query_logs import (
+        TOOL_DEFINITION as LOGS_TOOL,
+        execute as execute_query_logs,
+    )
 
     builtins = [
         (DEVICE_TOOL, execute_query_devices),
         (ALERT_TOOL, execute_query_alerts),
+        (KNOWLEDGE_TOOL, execute_query_knowledge),
+        (IPAM_TOOL, execute_query_ipam),
+        (TOPOLOGY_TOOL, execute_query_topology),
+        (LOGS_TOOL, execute_query_logs),
     ]
 
     for tool_def, handler in builtins:
