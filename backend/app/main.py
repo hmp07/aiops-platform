@@ -127,6 +127,7 @@ from app.modules.module9_platform.api import router as platform_router
 from app.modules.module10_eventwall.api import router as eventwall_router
 from app.modules.module8_aiops.api import router as aiops_router
 from app.modules.module8_aiops.admin_api import router as aiops_admin_router
+from app.modules.module8_aiops.mcp_api import router as aiops_mcp_router
 from app.modules.module1_asset.api import router as asset_router, cal_router as asset_cal_router
 from app.modules.module2_ipam.api import router as ipam_router
 from app.modules.module5_config.api import router as config_router
@@ -142,6 +143,7 @@ app.include_router(platform_router, prefix="/api/v1")
 app.include_router(eventwall_router, prefix="/api/v1")
 app.include_router(aiops_router, prefix="/api/v1")
 app.include_router(aiops_admin_router, prefix="/api/v1")
+app.include_router(aiops_mcp_router, prefix="/api/v1")
 app.include_router(asset_router, prefix="/api/v1")
 app.include_router(asset_cal_router, prefix="/api/v1")
 app.include_router(ipam_router, prefix="/api/v1")
