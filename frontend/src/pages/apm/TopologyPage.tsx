@@ -197,12 +197,9 @@ export default function TopologyPage() {
             attributionPosition="bottom-left"
             nodesDraggable
             nodesConnectable={false}
-            edgesFocusable={false}
             edgesUpdatable={false}
             deleteKeyCode={null}
-            selectionKeyCode={null}
-            multiSelectionKeyCode={null}
-            panOnDrag={[1, 2]}
+            panOnDrag={true}
             selectNodesOnDrag={false}
           >
             <Background color="#e8e8e8" gap={20} />
