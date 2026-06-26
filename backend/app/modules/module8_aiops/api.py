@@ -1,6 +1,7 @@
 """M8 AIOps — API endpoints (sxdevops architecture)."""
 import asyncio
 import json
+import logging
 import uuid as _uuid
 from datetime import datetime, timezone
 
@@ -17,6 +18,7 @@ from app.modules.module8_aiops.models import (
     AIOpsToolInvocation, AIOpsModelInvocation,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/aiops", tags=["AIOps"])
 
 # ── helpers ──────────────────────────────────────────────────
@@ -169,7 +171,8 @@ async def execute_pending(session_id: str, current_user: dict = Depends(get_curr
             msg.extra_meta = {"processing_text": "Completed", "processing_steps": result.get("steps", []),
                                "tool_events": result.get("tool_events", [])}
         except Exception as e:
-            msg.content = f"Error: {str(e)[:500]}"
+            logger.exception("Agent pipeline error in session %s", str(session_id))
+            msg.content = "An internal error occurred while processing your request."
             msg.processing_status = "failed"
         await db.commit()
 
@@ -274,22 +277,27 @@ async def _execute_agent_pipeline(user_input: str, user: dict, session_id) -> di
     if matched_tool:
         steps.append({"title": f"Calling {matched_tool}", "status": "completed"})
         try:
-            tool_result = await _execute_tool(matched_tool, user_input)
+            tool_result = await _execute_tool(matched_tool, user_input, user)
             tool_events.append({"name": matched_tool, "detail": f"Found {tool_result.get('found', 0)} results"})
         except Exception as e:
-            tool_events.append({"name": matched_tool, "detail": f"Error: {e}"})
+            logger.exception("Tool %s failed", matched_tool)
+            tool_events.append({"name": matched_tool, "detail": "Tool execution failed"})
 
     # Step 3: Build messages for LLM
     system_prompt = _get_system_prompt(user)
     messages = [{"role": "system", "content": system_prompt}]
 
     if tool_result:
-        context = json.dumps(tool_result, ensure_ascii=False, default=str)
+        safe = _sanitize_tool_result(tool_result)
+        context = json.dumps(safe, ensure_ascii=False, default=str)
         messages.append({"role": "user", "content": user_input})
         messages.append({
+            "role": "assistant",
+            "content": f"<tool_results>\n{context}\n</tool_results>"
+        })
+        messages.append({
             "role": "user",
-            "content": f"<tool_results>\n{context}\n</tool_results>\n\n"
-                       "Provide a concise answer based on the tool results. Only use data within XML tags."
+            "content": "Provide a concise answer based on the tool results above."
         })
     else:
         messages.append({"role": "user", "content": user_input})
@@ -328,7 +336,19 @@ def _match_tool_keyword(user_input: str) -> str | None:
     return None
 
 
-async def _execute_tool(tool_name: str, query: str) -> dict:
+def _sanitize_tool_result(result: dict) -> dict:
+    """Truncate tool output fields to prevent prompt injection."""
+    safe = dict(result)
+    for item in safe.get("items", []):
+        if isinstance(item, dict):
+            for k in list(item.keys()):
+                v = item[k]
+                if isinstance(v, str) and len(v) > 200:
+                    item[k] = v[:200] + "..."
+    return safe
+
+
+async def _execute_tool(tool_name: str, query: str, user: dict | None = None) -> dict:
     """Execute a named tool and return results."""
     if tool_name == "query_device":
         from app.modules.module1_asset.repository import DeviceRepository
@@ -464,6 +484,7 @@ async def create_provider(body: dict, current_user: dict = Depends(get_current_u
 # ============================================================
 
 @router.get("/admin/skills")
+@require_permission("aiops:skill:list")
 async def list_skills(current_user: dict = Depends(get_current_user)):
     async with async_session_factory() as db:
         rows = (await db.execute(select(AIOpsSkill).where(AIOpsSkill.is_enabled == True))).scalars().all()
