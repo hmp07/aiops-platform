@@ -506,8 +506,11 @@ async def dispatch_chat(
         tool_args = plan.get("tool_args", {})
         steps.append({"title": f"Calling {tool_name}", "status": "running"})
 
+        import time as _time
+        _t0 = _time.time()
         try:
             tool_result = await invoke_platform_mcp_tool(tool_name, tool_args, user)
+            _latency = int((_time.time() - _t0) * 1000)
             found = tool_result.get("found", 0) if tool_result else 0
             tool_events.append({
                 "name": tool_name,
@@ -515,7 +518,17 @@ async def dispatch_chat(
                 "status": "success",
             })
             steps[-1]["status"] = "completed"
+            # Audit: record tool invocation
+            await record_tool_invocation(
+                session_id=session_id,
+                tool_name=tool_name,
+                input_params=tool_args,
+                output_summary=f"Found {found} results"[:500],
+                latency_ms=_latency,
+                status="success",
+            )
         except Exception:
+            _latency = int((_time.time() - _t0) * 1000)
             logger.exception("Tool %s failed in dispatch", tool_name)
             tool_events.append({
                 "name": tool_name,
@@ -524,6 +537,14 @@ async def dispatch_chat(
             })
             steps[-1]["status"] = "failed"
             tool_result = {"found": 0, "items": [], "error": "Tool execution failed"}
+            await record_tool_invocation(
+                session_id=session_id,
+                tool_name=tool_name,
+                input_params=tool_args,
+                output_summary="Tool execution failed",
+                latency_ms=_latency,
+                status="failed",
+            )
 
     # Step 3: Format response
     steps.append({"title": "Generating response", "status": "running"})
@@ -595,3 +616,154 @@ def _format_tool_result_for_display(user_input: str, tool_result: dict) -> str:
 
 
 import json as _json
+
+
+# ═══════════════════════════════════════════════════════════════
+# Audit Recording
+# ═══════════════════════════════════════════════════════════════
+
+async def record_tool_invocation(
+    session_id: str,
+    tool_name: str,
+    input_params: dict | None = None,
+    output_summary: str = "",
+    latency_ms: int = 0,
+    status: str = "success",
+    message_id: str | None = None,
+):
+    """Record a tool invocation for audit trail."""
+    import uuid as _uuid
+    async with async_session_factory() as db:
+        inv = AIOpsToolInvocation(
+            session_id=_uuid.UUID(session_id) if session_id else _uuid.uuid4(),
+            message_id=_uuid.UUID(message_id) if message_id else None,
+            tool_name=tool_name,
+            input_params=input_params or {},
+            output_summary=output_summary[:500],
+            latency_ms=latency_ms,
+            status=status,
+        )
+        db.add(inv)
+        await db.commit()
+
+
+async def record_model_invocation(
+    session_id: str,
+    model_name: str,
+    purpose: str = "reasoning",
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_cost: float = 0.0,
+    latency_ms: int = 0,
+    message_id: str | None = None,
+):
+    """Record a model invocation for audit trail."""
+    import uuid as _uuid
+    async with async_session_factory() as db:
+        inv = AIOpsModelInvocation(
+            session_id=_uuid.UUID(session_id) if session_id else _uuid.uuid4(),
+            message_id=_uuid.UUID(message_id) if message_id else None,
+            model_name=model_name,
+            purpose=purpose,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_cost=total_cost,
+            latency_ms=latency_ms,
+        )
+        db.add(inv)
+        await db.commit()
+
+
+async def get_audit_overview(db_session=None) -> dict:
+    """Return audit overview statistics."""
+    if db_session is None:
+        db = async_session_factory()
+        own_db = True
+    else:
+        db = db_session
+        own_db = False
+
+    try:
+        if own_db:
+            async with db as session:
+                return await _get_audit_overview(session)
+        else:
+            return await _get_audit_overview(db)
+    finally:
+        pass
+
+
+async def _get_audit_overview(db) -> dict:
+    from sqlalchemy import func
+
+    # Session count
+    session_count = (await db.execute(
+        select(func.count(AIOpsChatSession.id))
+    )).scalar() or 0
+
+    # Tool invocation count
+    tool_count = (await db.execute(
+        select(func.count(AIOpsToolInvocation.id))
+    )).scalar() or 0
+
+    # Model invocation count
+    model_count = (await db.execute(
+        select(func.count(AIOpsModelInvocation.id))
+    )).scalar() or 0
+
+    # Total cost
+    total_cost = (await db.execute(
+        select(func.sum(AIOpsModelInvocation.total_cost))
+    )).scalar() or 0.0
+
+    return {
+        "total_sessions": session_count,
+        "total_tool_invocations": tool_count,
+        "total_model_invocations": model_count,
+        "total_cost": float(total_cost),
+    }
+
+
+async def get_audit_costs(db_session=None) -> dict:
+    """Return cost breakdown by model."""
+    if db_session is None:
+        db = async_session_factory()
+        own_db = True
+    else:
+        db = db_session
+        own_db = False
+
+    try:
+        if own_db:
+            async with db as session:
+                return await _get_audit_costs(session)
+        else:
+            return await _get_audit_costs(db)
+    finally:
+        pass
+
+
+async def _get_audit_costs(db) -> dict:
+    from sqlalchemy import func
+
+    rows = (await db.execute(
+        select(
+            AIOpsModelInvocation.model_name,
+            func.count(AIOpsModelInvocation.id),
+            func.sum(AIOpsModelInvocation.prompt_tokens),
+            func.sum(AIOpsModelInvocation.completion_tokens),
+            func.sum(AIOpsModelInvocation.total_cost),
+        ).group_by(AIOpsModelInvocation.model_name)
+    )).all()
+
+    items = []
+    for row in rows:
+        items.append({
+            "model_name": row[0],
+            "invocations": row[1],
+            "total_prompt_tokens": row[2] or 0,
+            "total_completion_tokens": row[3] or 0,
+            "total_cost": float(row[4] or 0),
+        })
+
+    return {"items": items}
