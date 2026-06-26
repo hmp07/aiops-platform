@@ -99,34 +99,37 @@ class AgentExecutor:
     async def _execute_direct(
         self, user_input: str, tools: list, session_id: str
     ) -> AsyncIterator[str]:
-        """Direct mode: call matching tool, return result."""
-        yield self._sse("thought", {"step": 1, "content": "Executing query directly..."})
+        """Direct mode: call matching tool, then let LLM format the answer."""
+        tool_results: list[dict] = []
 
         for tool in tools:
             spec = tool.spec
-            # Simple tool selection: match tool name keywords in input
             if spec.tool_id.replace("query_", "") in user_input.lower():
+                yield self._sse("thought", {"step": 1, "content": f"Calling {spec.name}..."})
                 yield self._sse("tool_call", {"tool": spec.tool_id, "input": {"query": user_input}})
                 try:
                     start = time.time()
                     result = await tool.execute(query=user_input)
                     latency = int((time.time() - start) * 1000)
-                    summary = str(result)[:500]
+                    summary = str(result)[:800]
                     yield self._sse("tool_result", {"tool": spec.tool_id, "summary": summary, "latency_ms": latency})
-                    self._audit["steps"].append({"tool": spec.tool_id, "status": "success", "latency_ms": latency})
                     self._audit["tool_calls"] += 1
+                    tool_results.append({"tool": spec.tool_id, "result": result})
                 except Exception as e:
                     yield self._sse("error", {"tool": spec.tool_id, "message": str(e)})
                 break
-        else:
-            # No tool matched — generate with LLM
-            yield self._sse("thought", {"step": 1, "content": "Generating response..."})
-            llm_result = await self._llm.generate(
-                [{"role": "user", "content": user_input}],
-                tools=[t.spec.model_dump() for t in tools],
-            )
-            self._audit["llm_calls"] += 1
-            yield self._sse("rich_card", {"card_type": "text_response", "data": {"text": llm_result["content"]}})
+
+        # Let LLM format the answer using tool results
+        yield self._sse("thought", {"step": 2, "content": "Generating summary..."})
+        context = json.dumps(tool_results, ensure_ascii=False, default=str) if tool_results else "no tool results"
+        llm_result = await self._llm.generate([
+            {"role": "system", "content": "You are an AIOps assistant. Answer concisely based on tool results."},
+            {"role": "user", "content": user_input},
+            {"role": "assistant", "content": f"Tool results: {context}"},
+            {"role": "user", "content": "Provide a concise answer based on the tool results above."},
+        ])
+        self._audit["llm_calls"] += 1
+        yield self._sse("rich_card", {"card_type": "text_response", "data": {"text": llm_result["content"]}})
 
     async def _execute_react(
         self, user_input: str, tools: list, session_id: str, plan_first: bool = False
