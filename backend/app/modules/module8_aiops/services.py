@@ -3,7 +3,7 @@
 All business logic lives here. API endpoints in api.py / admin_api.py are thin
 routers that delegate to these functions.
 
-Porting from: d:\projects\sxdevops\backend\aiops\services.py (~7400 lines)
+Porting from: sxdevops/backend/aiops/services.py (~7400 lines)
 """
 
 import logging
@@ -176,9 +176,131 @@ async def bootstrap_payload_for_user(db: AsyncSession, user: dict) -> dict:
             "require_confirmation": config.require_confirmation if config else True,
             "show_evidence": config.show_evidence if config else True,
         },
-        # Will be populated in later units
-        "active_mcp_servers": [],
+        # MCP tools populated from ToolRegistry
+        "active_mcp_servers": [
+            {
+                "id": "builtin-platform",
+                "name": "平台内置 MCP",
+                "description": "查询设备、告警、日志、IPAM、拓扑和知识库。",
+                "tool_whitelist": list(PLATFORM_MCP_TOOL_MAP.keys()),
+                "is_builtin": True,
+            }
+        ],
         "active_skills": [],
         "action_registry": [],
         "action_registry_summary": None,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# MCP Tool System
+# ═══════════════════════════════════════════════════════════════
+
+# Will be populated by register_builtin_tools()
+PLATFORM_MCP_TOOL_MAP: dict = {}
+
+
+def _register_builtin_mcp_tools():
+    """Register all builtin platform MCP tools into the ToolRegistry.
+
+    Called at app startup (see main.py lifespan).
+    """
+    from app.modules.module8_aiops.tools.registry import ToolSpec, register_tool
+    from app.modules.module8_aiops.tools.builtin.query_devices import (
+        TOOL_DEFINITION as DEVICE_TOOL,
+        execute as execute_query_devices,
+    )
+    from app.modules.module8_aiops.tools.builtin.query_alerts import (
+        TOOL_DEFINITION as ALERT_TOOL,
+        execute as execute_query_alerts,
+    )
+
+    builtins = [
+        (DEVICE_TOOL, execute_query_devices),
+        (ALERT_TOOL, execute_query_alerts),
+    ]
+
+    for tool_def, handler in builtins:
+        spec = ToolSpec(
+            name=tool_def["name"],
+            title=tool_def["title"],
+            description=tool_def["description"],
+            handler_name=tool_def["handler_name"],
+            input_schema=tool_def["input_schema"],
+            permission=tool_def.get("permission", ""),
+        )
+        register_tool(spec, handler)
+        PLATFORM_MCP_TOOL_MAP[tool_def["name"]] = tool_def["handler_name"]
+
+    logger.info("Registered %d builtin MCP tools", len(builtins))
+
+
+def list_platform_mcp_tools(user: dict | None = None) -> list[dict]:
+    """List all registered platform MCP tools (sxdevops pattern).
+
+    Filters by user permissions if user provided.
+    """
+    from app.modules.module8_aiops.tools.registry import list_tools
+    return list_tools(user)
+
+
+async def invoke_platform_mcp_tool(
+    tool_name: str,
+    arguments: dict | None = None,
+    user: dict | None = None,
+) -> dict:
+    """Invoke a platform MCP tool by name (sxdevops pattern).
+
+    Args:
+        tool_name: Full tool name, e.g. 'aiops.query_devices'
+        arguments: Tool arguments dict with 'query', 'limit', etc.
+        user: Current user dict for permission checks
+
+    Returns:
+        Tool result dict with 'found', 'items', etc.
+    """
+    from app.modules.module8_aiops.tools.registry import get_tool
+
+    arguments = arguments if isinstance(arguments, dict) else {}
+    tool = get_tool(tool_name)
+
+    if tool is None:
+        return {"found": 0, "items": [], "error": f"Unknown tool: {tool_name}"}
+
+    if tool.handler is None:
+        return {"found": 0, "items": [], "error": f"Tool handler not bound: {tool_name}"}
+
+    query = str(arguments.get("query") or "").strip()
+    limit = max(1, min(int(arguments.get("limit") or 10), 20))
+
+    try:
+        # Build kwargs based on what the handler accepts
+        result = await tool.handler(
+            query=query,
+            limit=limit,
+            **{k: v for k, v in arguments.items() if k not in ("query", "limit")},
+        )
+        return result
+    except Exception:
+        logger.exception("MCP tool %s failed", tool_name)
+        return {"found": 0, "items": [], "error": "Tool execution failed"}
+
+
+def build_mcp_tool_definitions() -> list[dict]:
+    """Build OpenAI function-calling compatible tool definitions.
+
+    Returns a list of tool definitions suitable for the LLM 'tools' parameter.
+    """
+    from app.modules.module8_aiops.tools.registry import ToolRegistry
+
+    definitions = []
+    for spec_dict in ToolRegistry.list_all():
+        definitions.append({
+            "type": "function",
+            "function": {
+                "name": spec_dict["name"],
+                "description": spec_dict["description"],
+                "parameters": spec_dict["inputSchema"],
+            },
+        })
+    return definitions
