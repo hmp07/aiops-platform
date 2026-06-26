@@ -86,9 +86,10 @@ async def create_session(body: dict, current_user: dict = Depends(get_current_us
 
 @router.post("/sessions/{session_id}/delete_session")
 async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    uid = current_user.get("user_id", "")
     async with async_session_factory() as db:
         obj = await db.get(AIOpsChatSession, _uuid.UUID(session_id))
-        if obj and obj.user_id == current_user.get("user_id", ""):
+        if obj and obj.user_id == uid:
             await db.delete(obj)
             await db.commit()
         return {"status": "deleted"}
@@ -101,7 +102,11 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
 @router.get("/sessions/{session_id}/messages")
 async def list_messages(session_id: str, current_user: dict = Depends(get_current_user)):
     """List messages. Does NOT trigger agent execution — use execute_pending for that."""
+    uid = current_user.get("user_id", "")
     async with async_session_factory() as db:
+        sess = await db.get(AIOpsChatSession, _uuid.UUID(session_id))
+        if not sess or sess.user_id != uid:
+            return {"items": [], "error": "session not found"}
         rows = (await db.execute(
             select(AIOpsChatMessage)
             .where(AIOpsChatMessage.session_id == _uuid.UUID(session_id))
@@ -125,8 +130,12 @@ async def list_messages(session_id: str, current_user: dict = Depends(get_curren
 @router.post("/sessions/{session_id}/execute_pending")
 async def execute_pending(session_id: str, current_user: dict = Depends(get_current_user)):
     """Execute the agent for any pending assistant message. Blocks until done."""
+    uid = current_user.get("user_id", "")
     async with async_session_factory() as db:
         sid = _uuid.UUID(session_id)
+        sess = await db.get(AIOpsChatSession, sid)
+        if not sess or sess.user_id != uid:
+            return {"status": "error", "message": "session not found"}
         rows = (await db.execute(
             select(AIOpsChatMessage).where(
                 AIOpsChatMessage.session_id == sid,
@@ -186,10 +195,11 @@ async def send_message_async(
     if not content:
         return {"error": "content required"}
 
+    uid = current_user.get("user_id", "")
     async with async_session_factory() as db:
         sid = _uuid.UUID(session_id)
         sess = await db.get(AIOpsChatSession, sid)
-        if not sess:
+        if not sess or sess.user_id != uid:
             return {"error": "session not found"}
 
         now = _now()
@@ -371,24 +381,26 @@ def _get_system_prompt(user: dict) -> str:
 
 @router.post("/actions/{action_id}/confirm")
 async def confirm_action(action_id: str, current_user: dict = Depends(get_current_user)):
+    uid = current_user.get("user_id", "")
     async with async_session_factory() as db:
         action = await db.get(AIOpsPendingAction, _uuid.UUID(action_id))
-        if action:
+        if action and action.user_id == uid:
             action.status = "confirmed"
             action.decided_at = _now()
-            action.decided_by = current_user.get("user_id", "")
+            action.decided_by = uid
             await db.commit()
         return {"status": "confirmed"}
 
 
 @router.post("/actions/{action_id}/cancel")
 async def cancel_action(action_id: str, current_user: dict = Depends(get_current_user)):
+    uid = current_user.get("user_id", "")
     async with async_session_factory() as db:
         action = await db.get(AIOpsPendingAction, _uuid.UUID(action_id))
-        if action:
+        if action and action.user_id == uid:
             action.status = "canceled"
             action.decided_at = _now()
-            action.decided_by = current_user.get("user_id", "")
+            action.decided_by = uid
             await db.commit()
         return {"status": "canceled"}
 
@@ -398,6 +410,7 @@ async def cancel_action(action_id: str, current_user: dict = Depends(get_current
 # ============================================================
 
 @router.get("/admin/providers")
+@require_permission("aiops:provider:list")
 async def list_providers(current_user: dict = Depends(get_current_user)):
     async with async_session_factory() as db:
         rows = (await db.execute(select(AIOpsModelProvider).order_by(AIOpsModelProvider.created_at.desc()))).scalars().all()
@@ -410,8 +423,24 @@ async def list_providers(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/admin/providers", status_code=201)
+@require_permission("aiops:provider:create")
 async def create_provider(body: dict, current_user: dict = Depends(get_current_user)):
     from app.modules.module8_ai.llm.providers import PROVIDER_PRESETS
+    from urllib.parse import urlparse
+    import ipaddress, socket
+
+    # SSRF guard: reject private/loopback URLs
+    base_url = body.get("base_url", "")
+    host = urlparse(base_url).hostname
+    if host:
+        try:
+            for addr in socket.getaddrinfo(host, None):
+                ip = ipaddress.ip_address(addr[4][0])
+                if ip.is_loopback or ip.is_private or ip.is_link_local:
+                    return {"status": "error", "message": "Invalid or unsafe base_url"}
+        except socket.gaierror:
+            return {"status": "error", "message": "Cannot resolve base_url hostname"}
+
     preset = PROVIDER_PRESETS.get(body.get("provider_type", "openai_compatible"), {})
     async with async_session_factory() as db:
         obj = AIOpsModelProvider(
