@@ -1,8 +1,8 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Spin, Empty, Select, Button, Space, Tag, message, Typography, Tooltip } from "antd";
 import { ReloadOutlined, NodeIndexOutlined, AimOutlined } from "@ant-design/icons";
-import ReactFlow, { Background, Controls, Handle, Position, MarkerType, useReactFlow } from "reactflow";
+import ReactFlow, { Background, Controls, Handle, Position, MarkerType, useReactFlow, ReactFlowProvider, applyNodeChanges, type NodeChange } from "reactflow";
 import "reactflow/dist/style.css";
 import dagre from "dagre";
 import { apmApi } from "../../api/modules";
@@ -50,19 +50,20 @@ function ItopNode({ data }: any) {
       background: "#fff", border: `2px solid ${color}`, borderRadius: 10,
       padding: "6px 12px", minWidth: 110, textAlign: "center",
       boxShadow: `0 1px 6px ${color}22`,
+      width: "100%", height: "100%",
     }}>
-      <Handle type="target" position={Position.Top} />
+      <Handle type="target" position={Position.Top} style={{ background: color, width: 10, height: 10 }} />
       <div style={{ fontSize: 10, color, fontWeight: 700, lineHeight: 1.2 }}>
         {data.typeLabel || data.type}
       </div>
-      <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3 }}>{data.label}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, cursor: "grab" }}>{data.label}</div>
       {data.properties?.status && (
         <Tag color={data.properties.status === "production" ? "green" : "default"}
              style={{ fontSize: 9, marginTop: 2, lineHeight: "14px" }}>
           {data.properties.status}
         </Tag>
       )}
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="source" position={Position.Bottom} style={{ background: color, width: 10, height: 10 }} />
     </div>
   );
 }
@@ -75,6 +76,48 @@ function LocalNode({ data }: any) {
       <Tag color={data.health === "healthy" ? "green" : "red"} style={{ fontSize: 10, marginTop: 2 }}>{data.health}</Tag>
       <Handle type="source" position={Position.Bottom} />
     </div>
+  );
+}
+
+// ── inner graph component (needs useReactFlow inside ReactFlowProvider) ──
+function TopologyGraph({ nodes, edges, resetKey, useItop }: {
+  nodes: any[]; edges: any[]; resetKey: number; useItop: boolean;
+}) {
+  const { fitView } = useReactFlow();
+  const [localNodes, setLocalNodes] = useState(nodes);
+
+  // Sync when parent nodes change (data/ layout changed)
+  useEffect(() => {
+    setLocalNodes(nodes);
+  }, [nodes]);
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => setLocalNodes(nds => applyNodeChanges(changes, nds)),
+    [],
+  );
+
+  useEffect(() => {
+    fitView({ padding: 0.3, duration: 300 });
+  }, [resetKey, fitView]);
+
+  return (
+    <ReactFlow
+      nodes={localNodes}
+      edges={edges}
+      onNodesChange={onNodesChange}
+      nodeTypes={{ itop: ItopNode, local: LocalNode }}
+      fitView
+      fitViewOptions={{ padding: 0.3 }}
+      attributionPosition="bottom-left"
+      nodesDraggable
+      nodesConnectable={false}
+      edgesUpdatable={false}
+      deleteKeyCode={null}
+      panOnDrag={true}
+    >
+      <Background color="#e8e8e8" gap={20} />
+      <Controls showInteractive={false} />
+    </ReactFlow>
   );
 }
 
@@ -131,11 +174,34 @@ export default function TopologyPage() {
     markerEnd: { type: MarkerType.ArrowClosed, color: "#b0b0b0" },
   }));
 
-  const nodes = useMemo(
-    () => layoutDagre(rawNodes, rawEdges),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph, resetKey],
+  // Track node positions in state so ReactFlow drags aren't overwritten.
+  // Only re-layout when the graph data actually changes (by fingerprint).
+  const graphFingerprint = useMemo(
+    () => graph ? JSON.stringify({ n: graph.nodes?.map((n: any) => n.id).sort(),
+                                    e: graph.edges?.map((e: any) => e.id).sort() }) : null,
+    [graph],
   );
+
+  const [nodes, setNodes] = useState<any[]>([]);
+  const prevFingerprint = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Only recompute layout when graph data actually changes or reset is requested
+    if (graphFingerprint && graphFingerprint !== prevFingerprint.current) {
+      prevFingerprint.current = graphFingerprint;
+      setNodes(layoutDagre(rawNodes, rawEdges));
+    }
+  }, [graphFingerprint]);
+
+  // Handle reset layout button separately (skip initial mount)
+  const resetCount = useRef(0);
+  useEffect(() => {
+    resetCount.current += 1;
+    if (resetCount.current > 1 && rawNodes.length > 0) {
+      setNodes(layoutDagre(rawNodes, rawEdges));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
   const edges = rawEdges;
   const hasData = nodes.length > 0;
 
@@ -187,24 +253,9 @@ export default function TopologyPage() {
           <Empty style={{ marginTop: "10%" }}
             description={useItop ? "未找到应用依赖数据，请点击「刷新」从 iTop 获取" : "暂无本地拓扑数据"} />
         ) : (
-          <ReactFlow
-            key={resetKey}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={{ itop: ItopNode, local: LocalNode }}
-            fitView
-            fitViewOptions={{ padding: 0.3 }}
-            attributionPosition="bottom-left"
-            nodesDraggable
-            nodesConnectable={false}
-            edgesUpdatable={false}
-            deleteKeyCode={null}
-            panOnDrag={true}
-            selectNodesOnDrag={false}
-          >
-            <Background color="#e8e8e8" gap={20} />
-            <Controls showInteractive={false} />
-          </ReactFlow>
+          <ReactFlowProvider>
+            <TopologyGraph nodes={nodes} edges={edges} resetKey={resetKey} useItop={useItop} />
+          </ReactFlowProvider>
         )}
       </div>
 
