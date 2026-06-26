@@ -94,7 +94,7 @@ class LLMClient:
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             return {
-                "content": f"[Error calling LLM: {str(e)[:200]}]",
+                "content": "[Error calling LLM provider. Check server logs for details.]",
                 "prompt_tokens": 0, "completion_tokens": 0,
                 "total_cost": 0.0, "latency_ms": 0,
             }
