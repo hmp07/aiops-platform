@@ -25,7 +25,6 @@ export default function AIChatPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const token = localStorage.getItem("demo_token") || "";
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
@@ -45,18 +44,20 @@ export default function AIChatPage() {
   const handleSend = async (text?: string) => {
     const q = text || input;
     if (!q.trim() || loading) return;
-    if (!activeSessionId) {
+    let sid = activeSessionId;
+    if (!sid) {
       try {
         const r = await client.post("/ai/sessions", { title: q.slice(0, 50) });
-        setActiveSessionId(r.data.id);
+        sid = r.data.id;
+        setActiveSessionId(sid);
       } catch { message.error("创建会话失败"); return; }
     }
 
     setMessages(prev => [...prev, { role: "user", content: q }]);
     setInput("");
     setLoading(true);
-    const sid = activeSessionId;
 
+    const token = localStorage.getItem("access_token") || "";
     try {
       const resp = await fetch(`/api/v1/ai/sessions/${sid}/messages`, {
         method: "POST",
@@ -72,19 +73,26 @@ export default function AIChatPage() {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n").filter(l => l.startsWith("data: "));
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
           for (const line of lines) {
-            const data = line.slice(6);
-            if (data === "[DONE]") break;
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (!data || data === "[DONE]") continue;
             try {
               const parsed = JSON.parse(data);
-              if (parsed.content) {
-                aiContent += parsed.content;
-              } else if (parsed.card_type) {
-                aiContent += `\n\n**[${parsed.card_type}]** ${parsed.data?.text || JSON.stringify(parsed.data)?.slice(0, 200)}`;
+              // rich_card has the final formatted answer
+              if (parsed.card_type === "text_response") {
+                aiContent = parsed.data?.text || "";
+              } else if (parsed.content) {
+                // thought events show reasoning steps
+                aiContent += (aiContent ? "\n" : "") + "_" + parsed.content + "_";
               }
-              setMessages(prev => { const copy = [...prev]; copy[copy.length - 1] = { role: "ai", content: aiContent }; return copy; });
+              setMessages(prev => {
+                const copy = [...prev];
+                copy[copy.length - 1] = { role: "ai", content: aiContent };
+                return copy;
+              });
             } catch {}
           }
         }
@@ -103,7 +111,7 @@ export default function AIChatPage() {
         <Space><Button type="primary" size="small" icon={<PlusOutlined />} onClick={createSession}>新建</Button></Space>
       }>
         <List dataSource={sessions} renderItem={(s: Session) => (
-          <List.Item onClick={() => { setActiveSessionId(s.id); setMessages([{ role: "ai", content: "会话已加载。" }]); }} style={{ cursor: "pointer", background: activeSessionId === s.id ? "#e6f4ff" : undefined }}>
+          <List.Item onClick={async () => { setActiveSessionId(s.id); setMessages([{ role: "ai", content: "加载中..." }]); try { const r = await client.get(`/ai/sessions/${s.id}/messages`); const msgs = (r.data.items || []).map((m: any) => ({ role: m.role === "assistant" ? "ai" as const : "user" as const, content: m.content || "" })); setMessages([{ role: "ai" as const, content: "会话已加载。" }, ...msgs]); } catch { setMessages([{ role: "ai", content: "加载失败" }]); } }} style={{ cursor: "pointer", background: activeSessionId === s.id ? "#e6f4ff" : undefined }}>
             <Text ellipsis style={{ fontSize: 13 }}>{s.title}</Text>
           </List.Item>
         )} />
