@@ -1,26 +1,5 @@
-"""Built-in tool: query_device — mock implementation."""
+"""Built-in tool: query_device — real DB query."""
 from app.modules.module8_ai.tools.base import BaseTool, ToolSpec
-
-MOCK_DEVICES = [
-    {"id": "d1", "name": "CORE-SW-01", "type": "switch", "vendor": "Cisco",
-     "model": "Catalyst 9500", "ip": "10.1.1.1", "status": "active",
-     "cpu_usage": 95, "location": "A座-3F-核心机房"},
-    {"id": "d2", "name": "CORE-SW-02", "type": "switch", "vendor": "Cisco",
-     "model": "Catalyst 9500", "ip": "10.1.1.2", "status": "active",
-     "cpu_usage": 25, "location": "A座-3F-核心机房"},
-    {"id": "d3", "name": "AGG-SW-01", "type": "switch", "vendor": "Huawei",
-     "model": "S6730-H48X6C", "ip": "10.1.2.1", "status": "active",
-     "cpu_usage": 45, "location": "A座-3F-核心机房"},
-    {"id": "d9", "name": "ROUTER-01", "type": "router", "vendor": "Cisco",
-     "model": "ISR 4451", "ip": "10.1.0.254", "status": "active",
-     "cpu_usage": 55, "location": "A座-3F-核心机房"},
-    {"id": "d11", "name": "SRV-APP-01", "type": "server", "vendor": "Dell",
-     "model": "R750xs", "ip": "10.1.10.11", "status": "active",
-     "cpu_usage": 70, "location": "B座-2F-服务器机房"},
-    {"id": "d13", "name": "SRV-DB-01", "type": "server", "vendor": "HPE",
-     "model": "DL380 Gen11", "ip": "10.1.10.21", "status": "warning",
-     "cpu_usage": 82, "location": "B座-2F-服务器机房"},
-]
 
 
 class QueryDeviceTool(BaseTool):
@@ -28,8 +7,7 @@ class QueryDeviceTool(BaseTool):
         tool_id="query_device",
         name="Query Device",
         description="Query device information by name, IP address, or device type. "
-                    "Returns device details including status, CPU usage, location, "
-                    "model, and vendor.",
+                    "Returns device details including status, vendor, model, and location.",
         parameters={
             "type": "object",
             "properties": {
@@ -45,19 +23,26 @@ class QueryDeviceTool(BaseTool):
     )
 
     async def execute(self, **kwargs) -> dict:
-        device_name = kwargs.get("device_name", "").lower()
-        device_type = kwargs.get("device_type", "").lower()
+        from app.core.database.session import async_session_factory
+        from app.modules.module1_asset.repository import DeviceRepository
+
+        device_name = kwargs.get("device_name", "")
+        device_type = kwargs.get("device_type", "")
         ip_address = kwargs.get("ip_address", "")
 
-        results = MOCK_DEVICES
-        if device_name:
-            results = [d for d in results if device_name in d["name"].lower()]
-        if device_type:
-            results = [d for d in results if d["type"] == device_type]
-        if ip_address:
-            results = [d for d in results if d["ip"] == ip_address]
-
-        return {
-            "found": len(results),
-            "devices": results[:10],  # max 10 results
-        }
+        async with async_session_factory() as db:
+            repo = DeviceRepository(db)
+            total, items = await repo.list_devices(
+                1, 50, device_type or None, None, None,
+                device_name or ip_address or None,
+            )
+            return {
+                "found": total,
+                "devices": [
+                    {"id": str(d.id), "name": d.device_name, "type": d.device_type,
+                     "vendor": d.vendor, "model": d.model,
+                     "ip": str(d.management_ip) if d.management_ip else None,
+                     "status": d.lifecycle_status, "location": d.location}
+                    for d in items[:10]
+                ],
+            }
