@@ -166,3 +166,52 @@ class ChatMessage(Base):
     tool_calls: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ============================================================
+# Model Provider (LLM configuration)
+# ============================================================
+
+class ModelProvider(Base):
+    """LLM provider configuration — supports OpenAI-compatible APIs."""
+
+    __tablename__ = "aiops_model_providers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(32), nullable=False, default="openai_compatible")
+    base_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    api_key_encrypted: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    default_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    backup_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    models_list: Mapped[list] = mapped_column(JSONB, default=list)
+    input_price: Mapped[float] = mapped_column(Float, default=0.0)
+    output_price: Mapped[float] = mapped_column(Float, default=0.0)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ============================================================
+# Agent Profile
+# ============================================================
+
+class AgentProfile(Base):
+    """Pre-configured agent with model + skill bindings."""
+
+    __tablename__ = "agent_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    system_prompt: Mapped[str] = mapped_column(Text, default="")
+    allowed_skills: Mapped[list] = mapped_column(JSONB, default=list)
+    default_mode: Mapped[str] = mapped_column(String(32), default="react")
+    temperature: Mapped[float] = mapped_column(Float, default=0.7)
+    max_tokens: Mapped[int] = mapped_column(Integer, default=4096)
+    icon: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    suggested_questions: Mapped[list] = mapped_column(JSONB, default=list)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
