@@ -9,7 +9,7 @@ import logging
 import uuid as _uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,7 +66,7 @@ async def list_sessions(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/sessions", status_code=201)
-async def create_session(body: dict, current_user: dict = Depends(get_current_user)):
+async def create_session(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     async with async_session_factory() as db:
         sess = AIOpsChatSession(
             user_id=current_user.get("user_id", ""),
@@ -179,7 +179,7 @@ async def execute_pending(session_id: str, current_user: dict = Depends(get_curr
 @router.post("/sessions/{session_id}/send_message_async")
 async def send_message_async(
     session_id: str,
-    body: dict,
+    body: dict = Body(...),
     current_user: dict = Depends(get_current_user),
 ):
     """Async send: creates user + pending assistant message, returns immediately.
@@ -211,7 +211,7 @@ async def send_message_async(
         assistant_msg = AIOpsChatMessage(
             session_id=sid, role="assistant", content="",
             processing_status="pending",
-            metadata={"processing_text": "Thinking..."},
+            extra_meta={"processing_text": "Thinking..."},
             created_at=now,
         )
         db.add(assistant_msg)
@@ -233,159 +233,11 @@ async def send_message_async(
 
 
 async def _execute_agent_pipeline(user_input: str, user: dict, session_id) -> dict:
-    """Run the full Agent pipeline: route → preflight → tool calls → LLM format.
+    """Run the full Agent pipeline: planning → tool calls → response format.
 
-    Returns a dict ready to store in message.content + metadata.
+    Delegates to services.dispatch_chat() (sxdevops architecture).
     """
-    steps: list[dict] = []
-    tool_events: list[dict] = []
-    pending_action = None
-    total_tokens = 0
-    total_cost = 0.0
-
-    # Step 1: Load provider
-    from app.modules.module8_aiops.llm.providers import create_provider_from_config
-
-    async with async_session_factory() as db:
-        provider_row = (await db.execute(
-            select(AIOpsModelProvider).where(AIOpsModelProvider.is_enabled == True).limit(1)
-        )).scalar_one_or_none()
-
-    if not provider_row:
-        return {"content": "No model provider configured.", "steps": steps, "tool_events": tool_events,
-                "total_tokens": 0, "total_cost": 0.0}
-
-    llm = create_provider_from_config({
-        "provider_type": provider_row.provider_type,
-        "base_url": provider_row.base_url,
-        "api_key_encrypted": provider_row.api_key_encrypted,
-        "default_model": provider_row.default_model,
-        "input_price": float(provider_row.input_price or 0),
-        "output_price": float(provider_row.output_price or 0),
-    })
-
-    # Step 2: Try matching a tool (simple keyword routing from sxdevops)
-    tool_result = None
-    matched_tool = _match_tool_keyword(user_input)
-    if matched_tool:
-        steps.append({"title": f"Calling {matched_tool}", "status": "completed"})
-        try:
-            tool_result = await _execute_tool(matched_tool, user_input, user)
-            tool_events.append({"name": matched_tool, "detail": f"Found {tool_result.get('found', 0)} results"})
-        except Exception as e:
-            logger.exception("Tool %s failed", matched_tool)
-            tool_events.append({"name": matched_tool, "detail": "Tool execution failed"})
-
-    # Step 3: Build messages for LLM
-    system_prompt = _get_system_prompt(user)
-    messages = [{"role": "system", "content": system_prompt}]
-
-    if tool_result:
-        safe = _sanitize_tool_result(tool_result)
-        context = json.dumps(safe, ensure_ascii=False, default=str)
-        messages.append({"role": "user", "content": user_input})
-        messages.append({
-            "role": "assistant",
-            "content": f"<tool_results>\n{context}\n</tool_results>"
-        })
-        messages.append({
-            "role": "user",
-            "content": "Provide a concise answer based on the tool results above."
-        })
-    else:
-        messages.append({"role": "user", "content": user_input})
-
-    # Step 4: Call LLM
-    steps.append({"title": "Generating response", "status": "completed"})
-    llm_result = await llm.chat(messages=messages, stream=False)
-    total_tokens = llm_result.prompt_tokens + llm_result.completion_tokens
-    total_cost = llm_result.estimated_cost
-
-    return {
-        "content": llm_result.content,
-        "steps": steps,
-        "tool_events": tool_events,
-        "pending_action": pending_action,
-        "total_tokens": total_tokens,
-        "total_cost": total_cost,
-    }
-
-
-# ── Tool routing ──────────────────────────────────────────────
-
-def _match_tool_keyword(user_input: str) -> str | None:
-    """Simple keyword-based tool matching (sxdevops pattern)."""
-    lower = user_input.lower()
-    if any(w in lower for w in ("device", "设备", "server", "服务器", "switch", "router")):
-        return "query_device"
-    if any(w in lower for w in ("alert", "告警", "alarm", "alarm", "报警")):
-        return "query_alert"
-    if any(w in lower for w in ("knowledge", "知识", "sop", "runbook", "文档", "预案")):
-        return "query_knowledge"
-    if any(w in lower for w in ("ip", "subnet", "子网", "地址")):
-        return "query_ipam"
-    if any(w in lower for w in ("topology", "拓扑", "dependency", "依赖")):
-        return "query_topology"
-    return None
-
-
-def _sanitize_tool_result(result: dict) -> dict:
-    """Truncate tool output fields to prevent prompt injection."""
-    safe = dict(result)
-    for item in safe.get("items", []):
-        if isinstance(item, dict):
-            for k in list(item.keys()):
-                v = item[k]
-                if isinstance(v, str) and len(v) > 200:
-                    item[k] = v[:200] + "..."
-    return safe
-
-
-async def _execute_tool(tool_name: str, query: str, user: dict | None = None) -> dict:
-    """Execute a named tool and return results."""
-    if tool_name == "query_device":
-        from app.modules.module1_asset.repository import DeviceRepository
-        async with async_session_factory() as db:
-            repo = DeviceRepository(db)
-            total, items = await repo.list_devices(1, 20, None, None, None, None)
-            return {"found": total, "items": [
-                {"name": d.device_name, "type": d.device_type, "vendor": d.vendor,
-                 "model": d.model, "status": d.lifecycle_status,
-                 "ip": str(d.management_ip) if d.management_ip else None}
-                for d in items[:10]
-            ]}
-
-    elif tool_name == "query_alert":
-        from app.modules.module3_monitoring.repository import AlertRepository
-        async with async_session_factory() as db:
-            repo = AlertRepository(db)
-            total, items = await repo.list_all(1, 20, None, None, None, None)
-            return {"found": total, "items": [
-                {"title": a.title, "severity": a.severity, "status": a.status,
-                 "source": a.source, "time": a.time.isoformat() if a.time else None}
-                for a in items[:10]
-            ]}
-
-    elif tool_name == "query_knowledge":
-        from app.modules.module7_knowledge.repository import ArticleRepository
-        async with async_session_factory() as db:
-            repo = ArticleRepository(db)
-            total, items = await repo.list_all(1, 10, None, None, None)
-            return {"found": total, "items": [
-                {"title": a.title, "type": a.article_type, "tags": a.tags}
-                for a in items[:10]
-            ]}
-
-    return {"found": 0, "items": []}
-
-
-def _get_system_prompt(user: dict) -> str:
-    """Load system prompt from AgentConfig or use default."""
-    return (
-        "You are an AIOps intelligent operations assistant. "
-        "Answer concisely based on tool results. Use Chinese when the user uses Chinese. "
-        "Always cite specific data rather than generic statements."
-    )
+    return await aiops_services.dispatch_chat(user_input, user, session_id)
 
 
 # ============================================================
@@ -437,7 +289,7 @@ async def list_providers(current_user: dict = Depends(get_current_user)):
 
 @router.post("/admin/providers", status_code=201)
 @require_permission("aiops:provider:create")
-async def create_provider(body: dict, current_user: dict = Depends(get_current_user)):
+async def create_provider(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     from app.modules.module8_ai.llm.providers import PROVIDER_PRESETS
     from urllib.parse import urlparse
     import ipaddress, socket

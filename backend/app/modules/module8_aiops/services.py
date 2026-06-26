@@ -290,6 +290,12 @@ async def invoke_platform_mcp_tool(
     if tool.handler is None:
         return {"found": 0, "items": [], "error": f"Tool handler not bound: {tool_name}"}
 
+    # Permission check (sxdevops pattern)
+    if tool.permission and user:
+        user_perms = user.get("permissions", []) if isinstance(user, dict) else []
+        if user_perms and tool.permission not in user_perms:
+            return {"found": 0, "items": [], "error": "Forbidden: insufficient permissions"}
+
     query = str(arguments.get("query") or "").strip()
     limit = max(1, min(int(arguments.get("limit") or 10), 20))
 
@@ -324,3 +330,268 @@ def build_mcp_tool_definitions() -> list[dict]:
             },
         })
     return definitions
+
+
+# ═══════════════════════════════════════════════════════════════
+# LLM Call Wrapper
+# ═══════════════════════════════════════════════════════════════
+
+async def _request_model_completion(
+    messages: list[dict],
+    tools: list[dict] | None = None,
+    db_session=None,
+) -> dict:
+    """Send a chat completion request to the active LLM provider.
+
+    Args:
+        messages: OpenAI-format message list
+        tools: Optional function-calling tool definitions
+        db_session: Optional DB session (creates new if None)
+
+    Returns:
+        Dict with content, tool_calls, tokens, cost, error
+    """
+    if db_session is None:
+        from app.core.database.session import async_session_factory
+        db = async_session_factory()
+        own_db = True
+    else:
+        db = db_session
+        own_db = False
+
+    try:
+        if own_db:
+            async with db as session:
+                config = await get_agent_config(session)
+                provider = await get_active_provider(session, config)
+        else:
+            config = await get_agent_config(db)
+            provider = await get_active_provider(db, config)
+
+        if provider is None:
+            return {"content": "", "tool_calls": None, "error": "No LLM provider configured"}
+
+        from app.modules.module8_aiops.llm.providers import create_provider_from_config
+
+        llm = create_provider_from_config({
+            "provider_type": provider.provider_type,
+            "base_url": provider.base_url,
+            "api_key_encrypted": provider.api_key_encrypted or "",
+            "default_model": provider.default_model,
+            "input_price": float(provider.input_price or 0),
+            "output_price": float(provider.output_price or 0),
+        })
+
+        result = await llm.chat(messages=messages, tools=tools, stream=False)
+
+        return {
+            "content": result.content or "",
+            "tool_calls": result.tool_calls,
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
+            "estimated_cost": result.estimated_cost,
+            "finish_reason": result.finish_reason,
+            "error": None,
+        }
+
+    except Exception:
+        logger.exception("LLM completion failed")
+        return {"content": "", "tool_calls": None, "error": "LLM request failed"}
+    finally:
+        if own_db:
+            pass  # context manager handles cleanup
+
+
+# ═══════════════════════════════════════════════════════════════
+# Chat Planning & Dispatch
+# ═══════════════════════════════════════════════════════════════
+
+async def _llm_chat_planning(
+    user_input: str,
+    user: dict,
+    session_id: str = "",
+) -> dict:
+    """Use LLM to plan the response — select tools, analyze intent.
+
+    Returns a dict with:
+        intent: "tool_call" | "chat"
+        tool_name: selected tool name (if tool_call)
+        tool_args: arguments for the tool
+        direct_answer: fallback answer if no tool needed
+    """
+    system_prompt = (
+        "You are an AIOps intelligent assistant. Your job is to analyze the user's "
+        "question and decide whether to call a platform tool or answer directly.\n\n"
+        "Rules:\n"
+        "1. If the question asks about devices, alerts, logs, IP addresses, subnets, "
+        "topology, services, or knowledge articles, you MUST call the appropriate tool.\n"
+        "2. If the question is a simple greeting or general inquiry, answer directly.\n"
+        "3. Never make up data — always use tools for factual queries.\n"
+        "4. Use Chinese when the user uses Chinese."
+    )
+
+    tool_defs = build_mcp_tool_definitions()
+
+    # If no tools registered, fall through to direct chat
+    if not tool_defs:
+        return {"intent": "chat", "direct_answer": None}
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_input},
+    ]
+
+    result = await _request_model_completion(messages=messages, tools=tool_defs)
+
+    if result.get("error"):
+        return {"intent": "chat", "direct_answer": None}
+
+    tool_calls = result.get("tool_calls")
+    if tool_calls and len(tool_calls) > 0:
+        tc = tool_calls[0]
+        tool_name = tc.get("name", "")
+        try:
+            import json
+            tool_args = json.loads(tc.get("arguments", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            tool_args = {"query": user_input}
+
+        return {
+            "intent": "tool_call",
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "direct_answer": None,
+        }
+
+    # No tool call — LLM chose to answer directly
+    return {
+        "intent": "chat",
+        "direct_answer": result.get("content") or None,
+    }
+
+
+async def dispatch_chat(
+    user_input: str,
+    user: dict,
+    session_id: str = "",
+) -> dict:
+    """Full chat dispatch pipeline (sxdevops pattern).
+
+    Flow: planning → tool execution → response formatting
+
+    Returns a dict with:
+        content: final Markdown-formatted answer
+        steps: list of processing steps
+        tool_events: list of tool invocation summaries
+        total_tokens: total LLM tokens used
+        total_cost: estimated cost
+        pending_action: any action requiring confirmation
+    """
+    steps: list[dict] = []
+    tool_events: list[dict] = []
+    total_tokens = 0
+    total_cost = 0.0
+
+    # Step 1: LLM Planning
+    steps.append({"title": "Analyzing intent", "status": "running"})
+    plan = await _llm_chat_planning(user_input, user, session_id)
+    steps[-1]["status"] = "completed"
+
+    intent = plan.get("intent", "chat")
+
+    # Step 2: Execute tool if needed
+    tool_result = None
+    if intent == "tool_call":
+        tool_name = plan.get("tool_name", "")
+        tool_args = plan.get("tool_args", {})
+        steps.append({"title": f"Calling {tool_name}", "status": "running"})
+
+        try:
+            tool_result = await invoke_platform_mcp_tool(tool_name, tool_args, user)
+            found = tool_result.get("found", 0) if tool_result else 0
+            tool_events.append({
+                "name": tool_name,
+                "detail": f"Found {found} results",
+                "status": "success",
+            })
+            steps[-1]["status"] = "completed"
+        except Exception:
+            logger.exception("Tool %s failed in dispatch", tool_name)
+            tool_events.append({
+                "name": tool_name,
+                "detail": "Tool execution failed",
+                "status": "error",
+            })
+            steps[-1]["status"] = "failed"
+            tool_result = {"found": 0, "items": [], "error": "Tool execution failed"}
+
+    # Step 3: Format response
+    steps.append({"title": "Generating response", "status": "running"})
+
+    if intent == "chat" and plan.get("direct_answer"):
+        # LLM already gave a direct answer, use it
+        content = plan["direct_answer"]
+    elif tool_result:
+        # Format tool results
+        content = _format_tool_result_for_display(user_input, tool_result)
+    else:
+        # Fallback: ask LLM to format tool results or answer directly
+        content = _format_tool_result_for_display(user_input, tool_result or {"found": 0, "items": []})
+
+    steps[-1]["status"] = "completed"
+
+    return {
+        "content": content,
+        "steps": steps,
+        "tool_events": tool_events,
+        "pending_action": None,
+        "total_tokens": total_tokens,
+        "total_cost": total_cost,
+    }
+
+
+def _format_tool_result_for_display(user_input: str, tool_result: dict) -> str:
+    """Format tool results into a Markdown response string."""
+    if tool_result.get("error"):
+        return f"查询时遇到问题：{tool_result['error']}"
+
+    found = tool_result.get("found", 0)
+    items = tool_result.get("items", [])
+    returned = tool_result.get("returned", len(items))
+
+    lines = [f"根据查询结果（共 {found} 条，显示前 {returned} 条）：\n"]
+
+    for i, item in enumerate(items[:10], 1):
+        if "title" in item:
+            # Alert or article
+            severity = item.get("severity", "")
+            status = item.get("status", "")
+            tags = f" [{severity}]" if severity else ""
+            tags += f" ({status})" if status else ""
+            lines.append(f"{i}. **{item['title']}**{tags}")
+        elif "name" in item:
+            # Device or service
+            dev_type = item.get("type", "")
+            ip = item.get("ip", "")
+            info = f" ({dev_type})" if dev_type else ""
+            info += f" - IP: {ip}" if ip else ""
+            lines.append(f"{i}. **{item['name']}**{info}")
+        elif "cidr" in item:
+            # Subnet
+            used = item.get("used_ips", 0)
+            total = item.get("total_ips", 0)
+            lines.append(f"{i}. **{item['cidr']}** - {used}/{total} IPs used")
+        elif "message" in item:
+            # Log entry
+            sev = item.get("severity", "")
+            host = item.get("hostname", "")
+            msg = item.get("message", "")[:100]
+            lines.append(f"{i}. [{sev}] {host}: {msg}")
+        else:
+            # Generic
+            lines.append(f"{i}. {json.dumps(item, ensure_ascii=False, default=str)[:200]}")
+
+    return "\n".join(lines)
+
+
+import json as _json
