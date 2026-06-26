@@ -195,9 +195,13 @@ class ZabbixAdapter(BaseAdapter):
                         ip_val = iface.get("ip", "")
                         primary_ip = ip_val if ip_val else None
 
-                    # Check if device already exists (by hostname)
+                    # Dedup by external_id (unique across all sources), skip soft-deleted
+                    ext_id = f"zabbix:{hostid}"
                     existing = (await db_session.execute(
-                        select(Device).where(Device.device_name == hostname)
+                        select(Device).where(
+                            Device.extra_attrs["external_id"].as_string() == ext_id,
+                            Device.deleted_at.is_(None),
+                        )
                     )).scalar_one_or_none()
                     if not existing:
                         dev = Device(
@@ -207,7 +211,15 @@ class ZabbixAdapter(BaseAdapter):
                             management_ip=primary_ip,
                             lifecycle_status="in_use",
                             business_system="Zabbix Monitored",
-                            extra_attrs=host,
+                            extra_attrs={
+                            "source": "zabbix",
+                            "external_id": f"zabbix:{hostid}",
+                            "hostid": hostid,
+                            "host": hostname,
+                            "visible_name": host.get("name", hostname),
+                            "interfaces": interfaces,
+                            **host,
+                        },
                         )
                         db_session.add(dev)
                         devices_synced += 1

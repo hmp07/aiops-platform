@@ -73,8 +73,146 @@ class ItopAdapter(BaseAdapter):
         result = await self._call(payload)
         return self._parse_objects(result, ci_class)
 
+    async def update_ci(self, ci_class: str, ci_id: int, fields: dict) -> dict:
+        """Update an iTop CI via core/update.
+
+        Used for Zabbix → iTop data enrichment (serial numbers,
+        OS versions, etc. collected by Zabbix monitoring).
+        """
+        payload: dict = {
+            "operation": "core/update",
+            "class": ci_class,
+            "key": ci_id,
+            "fields": fields,
+        }
+        result = await self._call(payload)
+        return result
+
+    # ── TeemIp IPAM ─────────────────────────────────────────
+
+    async def get_ipv4_subnets(self, org_id: int | None = None) -> list[dict]:
+        """Fetch IPv4 subnets via core/get."""
+        key = f"SELECT IPv4Subnet WHERE org_id = {org_id}" if org_id else "SELECT IPv4Subnet"
+        result = await self._call({
+            "operation": "core/get", "class": "IPv4Subnet",
+            "key": key, "output_fields": "*", "limit": 200,
+        })
+        return self._parse_objects(result, "IPv4Subnet")
+
+    async def get_ipv4_addresses(self, subnet_id: int | None = None) -> list[dict]:
+        """Fetch IPv4 addresses, optionally filtered by subnet."""
+        key = f"SELECT IPv4Address WHERE subnet_id = {subnet_id}" if subnet_id else "SELECT IPv4Address"
+        result = await self._call({
+            "operation": "core/get", "class": "IPv4Address",
+            "key": key, "output_fields": "*", "limit": 500,
+        })
+        return self._parse_objects(result, "IPv4Address")
+
+    async def get_subnet_stats(self) -> list[dict]:
+        """Get per-subnet IP usage statistics via TeemIp."""
+        result = await self._call({
+            "operation": "teemip/get_nb_of_registered_ips_in_subnet",
+            "class": "IPv4Subnet",
+            "key": "SELECT IPv4Subnet",
+        })
+        objects = result.get("objects") or {}
+        return [
+            {
+                **v.get("fields", {}),
+                "subnet_size": v.get("subnet_size", 0),
+                "allocated": v.get("nb_of_ips", {}).get("allocated", 0),
+                "released": v.get("nb_of_ips", {}).get("released", 0),
+                "reserved": v.get("nb_of_ips", {}).get("reserved", 0),
+                "unassigned": v.get("nb_of_ips", {}).get("unassigned", 0),
+                "total_registered": v.get("nb_of_ips", {}).get("total registered", 0),
+                "free_ips": v.get("nb_of_ips", {}).get("free ips", 0),
+            }
+            for v in objects.values()
+        ]
+
+    # ── Dependency Graph ───────────────────────────────────
+
+    async def get_applications_with_fcis(self) -> list[dict]:
+        """Fetch all ApplicationSolutions with functionalcis_list expanded.
+
+        The functionalcis_list contains linked FunctionalCI objects
+        (DatabaseSchema, DBServer, WebServer, WebApplication, etc.)
+        that form the first level of the dependency chain.
+        """
+        result = await self._call({
+            "operation": "core/get",
+            "class": "ApplicationSolution",
+            "key": "SELECT ApplicationSolution",
+            "output_fields": "*",
+            "limit": 100,
+        })
+        return self._parse_objects(result, "ApplicationSolution")
+
+    async def get_fci_detail(self, ci_class: str, ci_id: int) -> dict | None:
+        """Get full detail of a single FunctionalCI by class name + id."""
+        result = await self._call({
+            "operation": "core/get",
+            "class": ci_class,
+            "key": ci_id,
+            "output_fields": "*",
+        })
+        objects = result.get("objects") or {}
+        for v in objects.values():
+            return {**v.get("fields", {}), "ci_class": ci_class, "id": int(v.get("key", 0))}
+        return None
+
+    async def get_all_functional_cis(self) -> list[dict]:
+        """Fetch ALL infrastructure CI objects by querying each subclass.
+
+        Queries each concrete FunctionalCI subclass separately because
+        iTop's abstract FunctionalCI parent class does not return
+        subclass-specific FK fields (dbserver_id, system_id, etc.).
+        """
+        fci_classes = [
+            "Server", "VirtualMachine", "DBServer", "WebServer",
+            "WebApplication", "DatabaseSchema", "Farm", "Hypervisor",
+            "NetworkDevice", "StorageSystem",
+        ]
+        all_cis: list[dict] = []
+        for cls_name in fci_classes:
+            try:
+                result = await self._call({
+                    "operation": "core/get",
+                    "class": cls_name,
+                    "key": f"SELECT {cls_name}",
+                    "output_fields": "*",
+                    "limit": 500,
+                })
+                for v in (result.get("objects") or {}).values():
+                    fields = v.get("fields", {})
+                    all_cis.append({
+                        **fields,
+                        "ci_class": cls_name,
+                        "id": int(v.get("key", 0)),
+                    })
+            except Exception:
+                pass  # skip classes not installed
+        return all_cis
+
+    # ── sync ─────────────────────────────────────────────────
+
     async def sync(self, db_session=None) -> dict:
-        """Sync iTop CIs → AIOps Device records."""
+        """Sync iTop CIs + TeemIp IPAM → AIOps Device + IPAM tables."""
+        ci_result = await self._sync_cis(db_session)
+
+        if db_session:
+            ipam_result = await self._sync_ipam(db_session)
+        else:
+            ipam_result = {}
+
+        return {
+            "status": "ok",
+            **ci_result,
+            **ipam_result,
+            "message": ci_result.get("message", "") + "; " + ipam_result.get("message", ""),
+        }
+
+    async def _sync_cis(self, db_session) -> dict:
         import uuid as _uuid
 
         total_synced = 0
@@ -97,11 +235,12 @@ class ItopAdapter(BaseAdapter):
                         ci_id = ci.get("id", "")
                         finalclass = ci.get("finalclass") or ci_class
 
-                        # Dedup by name + extra_attrs.ci_class
+                        ext_id = f"itop:{ci_id}"
+                        # Dedup by external_id (unique across sources), skip soft-deleted
                         existing = (await db_session.execute(
                             select(Device).where(
-                                Device.device_name == name,
-                                Device.extra_attrs["ci_class"].as_string() == ci_class,
+                                Device.extra_attrs["external_id"].as_string() == ext_id,
+                                Device.deleted_at.is_(None),
                             )
                         )).scalar_one_or_none()
 
@@ -120,6 +259,7 @@ class ItopAdapter(BaseAdapter):
                                 user_department=ci.get("organization_name"),
                                 extra_attrs={
                                     "source": "itop",
+                                    "external_id": ext_id,
                                     "ci_class": ci_class,
                                     "ci_id": ci_id,
                                     "finalclass": finalclass,
@@ -146,10 +286,103 @@ class ItopAdapter(BaseAdapter):
                 raise
 
         return {
-            "status": "ok",
             "cis_synced": total_synced,
             "by_class": details,
             "message": f"Synced {total_synced} CIs from iTop: {details}",
+        }
+
+    async def _sync_ipam(self, db_session) -> dict:
+        """Sync TeemIp IPAM data → AIOps Subnet + IPAllocation tables."""
+        import uuid as _uuid
+        from app.modules.module2_ipam.models import Subnet, IPAllocation
+        from sqlalchemy import select
+
+        try:
+            # ── Sync subnets with usage stats ──
+            stats = await self.get_subnet_stats()
+            subnets_synced = 0
+
+            for s in stats:
+                ip = s.get("ip", "")
+                mask = s.get("mask", "")
+                if not ip or not mask:
+                    continue
+                cidr = f"{ip}/{self._mask_to_prefix(mask)}"
+
+                existing = (await db_session.execute(
+                    select(Subnet).where(Subnet.cidr == cidr)
+                )).scalar_one_or_none()
+
+                if not existing:
+                    obj = Subnet(
+                        id=_uuid.uuid4(),
+                        cidr=cidr,
+                        description=s.get("name") or "",
+                        total_ips=s.get("subnet_size", 0),
+                        used_ips=s.get("total_registered", 0),
+                    )
+                    db_session.add(obj)
+                    subnets_synced += 1
+                else:
+                    existing.total_ips = s.get("subnet_size", 0)
+                    existing.used_ips = s.get("total_registered", 0)
+
+            # ── Build a quick subnet lookup: CIDR prefix → subnet_id ──
+            from sqlalchemy import select as _sel
+            all_subnets = (await db_session.execute(_sel(Subnet))).scalars().all()
+            cidr_to_id: dict[str, object] = {s.cidr: s.id for s in all_subnets}
+
+            # ── Sync IP addresses ──
+            addresses = await self.get_ipv4_addresses()
+            addr_synced = 0
+
+            for a in addresses:
+                ip_addr = a.get("ip", "")
+                if not ip_addr:
+                    continue
+                status = a.get("status", "free")
+                short_name = a.get("short_name") or ""
+
+                # Look up existing allocation
+                existing_check = (await db_session.execute(
+                    select(IPAllocation).where(IPAllocation.ip_address == ip_addr)
+                )).scalar_one_or_none()
+
+                if not existing_check:
+                    # Determine which subnet this IP belongs to
+                    matched_subnet_id = None
+                    for cidr, sid in cidr_to_id.items():
+                        if self._ip_in_cidr(ip_addr, str(cidr)):
+                            matched_subnet_id = sid
+                            break
+
+                    # Fallback: use first available subnet
+                    if matched_subnet_id is None and cidr_to_id:
+                        matched_subnet_id = list(cidr_to_id.values())[0]
+
+                    if matched_subnet_id is not None:
+                        alloc = IPAllocation(
+                            id=_uuid.uuid4(),
+                            subnet_id=matched_subnet_id,
+                            ip_address=ip_addr,
+                            status=status,
+                            interface_name=short_name if short_name else None,
+                            source="itop",
+                        )
+                        db_session.add(alloc)
+                        addr_synced += 1
+
+            if subnets_synced > 0 or addr_synced > 0:
+                await db_session.commit()
+
+        except Exception:
+            await db_session.rollback()
+            raise
+
+        return {
+            "ipam_subnets": subnets_synced,
+            "ipam_addresses": addr_synced,
+            "message": f"IPAM: {subnets_synced} subnets, {addr_synced} addresses",
         }
 
     async def close(self):
@@ -211,3 +444,20 @@ class ItopAdapter(BaseAdapter):
         if status == "implementation":
             return "testing"
         return "in_use"
+
+    @staticmethod
+    def _mask_to_prefix(mask: str) -> int:
+        """Convert dotted netmask to CIDR prefix length (e.g. 255.255.254.0 → 23)."""
+        try:
+            return sum(bin(int(octet)).count("1") for octet in mask.split("."))
+        except Exception:
+            return 24
+
+    @staticmethod
+    def _ip_in_cidr(ip: str, cidr: str) -> bool:
+        """Check if an IP address falls within a CIDR range."""
+        import ipaddress
+        try:
+            return ipaddress.ip_address(ip) in ipaddress.ip_network(cidr, strict=False)
+        except Exception:
+            return False

@@ -1,45 +1,201 @@
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, Spin, Tag, Empty } from "antd";
-import ReactFlow, { Background, Controls, Handle, Position } from "reactflow";
+import { Spin, Empty, Select, Button, Space, Tag, message, Typography } from "antd";
+import { ReloadOutlined, NodeIndexOutlined } from "@ant-design/icons";
+import ReactFlow, { Background, Controls, Handle, Position, MarkerType } from "reactflow";
 import "reactflow/dist/style.css";
 import { apmApi } from "../../api/modules";
 
-const healthColor: Record<string, string> = { healthy: "#52c41a", warning: "#fa8c16", critical: "#f5222d" };
+const { Text } = Typography;
 
-function CustomNode({ data }: any) {
+// ── node type → color map ──
+const typeColor: Record<string, string> = {
+  ApplicationSolution: "#1677ff",
+  DatabaseSchema: "#722ed1",
+  DBServer: "#531dab",
+  WebServer: "#13c2c2",
+  WebApplication: "#08979c",
+  VirtualMachine: "#52c41a",
+  Farm: "#237804",
+  Hypervisor: "#fa8c16",
+  Server: "#d4380d",
+  NetworkDevice: "#faad14",
+  StorageSystem: "#eb2f96",
+  Rack: "#8c8c8c",
+};
+
+// ── custom ReactFlow node for iTop CI ──
+function ItopNode({ data }: any) {
+  const color = typeColor[data.type] || "#1677ff";
   return (
-    <div style={{ background: "#e6f4ff", border: "2px solid #1677ff", borderRadius: 12, padding: "10px 14px", textAlign: "center" }}>
+    <div style={{
+      background: "#fff", border: `2px solid ${color}`, borderRadius: 10,
+      padding: "6px 12px", minWidth: 110, textAlign: "center",
+      boxShadow: `0 1px 6px ${color}22`,
+    }}>
       <Handle type="target" position={Position.Top} />
-      <div style={{ fontWeight: 600, fontSize: 13 }}>{data.label}</div>
-      <Tag color={healthColor[data.health]} style={{ fontSize: 11 }}>{data.health}</Tag>
+      <div style={{ fontSize: 10, color, fontWeight: 700, lineHeight: 1.2 }}>
+        {data.typeLabel || data.type}
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3 }}>{data.label}</div>
+      {data.properties?.status && (
+        <Tag color={data.properties.status === "production" ? "green" : "default"}
+             style={{ fontSize: 9, marginTop: 2, lineHeight: "14px" }}>
+          {data.properties.status}
+        </Tag>
+      )}
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+
+function LocalNode({ data }: any) {
+  return (
+    <div style={{ background: "#e6f4ff", border: "2px solid #1677ff", borderRadius: 12, padding: "6px 10px", textAlign: "center" }}>
+      <Handle type="target" position={Position.Top} />
+      <div style={{ fontWeight: 600, fontSize: 12 }}>{data.label}</div>
+      <Tag color={data.health === "healthy" ? "green" : "red"} style={{ fontSize: 10, marginTop: 2 }}>{data.health}</Tag>
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
 }
 
 export default function TopologyPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["topology"], queryFn: () => apmApi.getTopology().then(r => r.data) });
-  if (isLoading) return <Spin size="large" style={{ display: "block", margin: "200px auto" }} />;
-  if (!data?.nodes?.length) return <Empty description="No topology data. Add services and edges first." />;
+  const [appFilter, setAppFilter] = useState<string>("itop");
+  const [useItop, setUseItop] = useState(true);
 
-  const nodes = data.nodes.map((n: any, i: number) => ({
-    id: n.id, type: "custom",
-    position: { x: (i % 4) * 200 + 50, y: Math.floor(i / 4) * 150 + 50 },
-    data: { label: n.label, health: n.health },
+  const { data: itopData, isLoading: itopLoading, refetch: refetchItop } = useQuery({
+    queryKey: ["itop-topology", appFilter],
+    queryFn: () => apmApi.getAppTopology(appFilter).then(r => r.data),
+    enabled: useItop && !!appFilter,
+  });
+
+  const { data: localData, isLoading: localLoading } = useQuery({
+    queryKey: ["topology"],
+    queryFn: () => apmApi.getTopology().then(r => r.data),
+    enabled: !useItop,
+  });
+
+  const handleRefresh = useCallback(async () => {
+    try {
+      await apmApi.refreshTopology();
+      message.success("已从 iTop 刷新拓扑数据");
+      refetchItop();
+    } catch {
+      message.error("刷新失败，请检查 iTop 数据源连接");
+    }
+  }, [refetchItop]);
+
+  const isLoading = useItop ? itopLoading : localLoading;
+  const rawData = useItop ? itopData : localData;
+  const graph = rawData?.graph;
+
+  if (isLoading) return <Spin size="large" style={{ display: "block", margin: "20vh auto" }} />;
+
+  const nodes = (graph?.nodes || rawData?.nodes || []).map((n: any, i: number) => ({
+    id: n.id,
+    type: useItop ? "itop" : "local",
+    position: n.position || { x: (i % 5) * 180 + 40, y: Math.floor(i / 5) * 140 + 40 },
+    data: n,
   }));
-  const edges = (data.edges || []).map((e: any) => ({
-    id: e.source + "-" + e.target, source: e.source, target: e.target,
-    animated: e.status === "critical",
-    style: { stroke: e.status === "critical" ? "#f5222d" : "#1890ff", strokeWidth: 1.5 },
+
+  const edges = (graph?.edges || rawData?.edges || []).map((e: any, i: number) => ({
+    id: e.id || `e-${i}`,
+    source: e.source,
+    target: e.target,
+    label: e.label,
+    animated: true,
+    style: { stroke: "#b0b0b0", strokeWidth: 1.5 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: "#b0b0b0" },
   }));
+
+  const hasData = nodes.length > 0;
 
   return (
-    <Card title="Service Topology">
-      <div style={{ height: 500, border: "1px solid #f0f0f0", borderRadius: 8 }}>
-        <ReactFlow nodes={nodes} edges={edges} nodeTypes={{ custom: CustomNode }} fitView>
-          <Background color="#f0f0f0" gap={20} /><Controls />
-        </ReactFlow>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 152px)", minHeight: 400 }}>
+      {/* ── header bar (fixed height) ── */}
+      <div style={{
+        flex: "0 0 auto",
+        padding: "8px 16px",
+        marginBottom: 8,
+        border: "1px solid #f0f0f0",
+        borderRadius: 8,
+        background: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 8,
+      }}>
+        <Space><NodeIndexOutlined /><Text strong>服务拓扑</Text></Space>
+        <Space>
+          <Button size="small" onClick={() => setUseItop(!useItop)} type={useItop ? "primary" : "default"}>
+            {useItop ? "iTop 数据源" : "本地数据源"}
+          </Button>
+          {useItop && (
+            <>
+              <Select size="small" style={{ width: 140 }} value={appFilter} onChange={setAppFilter}
+                options={[
+                  { value: "itop", label: "itop 应用" },
+                  { value: "CRM", label: "CRM 应用" },
+                  { value: "ERP", label: "ERP 应用" },
+                  { value: "Sales web site", label: "Sales Web" },
+                ]}
+              />
+              <Button size="small" icon={<ReloadOutlined />} onClick={handleRefresh}>刷新</Button>
+            </>
+          )}
+        </Space>
       </div>
-    </Card>
+
+      {/* ── graph area: fills all remaining space ── */}
+      <div style={{
+        flex: "1 1 0%",
+        minHeight: 200,
+        border: "1px solid #f0f0f0",
+        borderRadius: 8,
+        background: "#fafafa",
+        overflow: "hidden",
+      }}>
+        {!hasData ? (
+          <Empty
+            style={{ marginTop: "10%" }}
+            description={useItop ? "未找到应用依赖数据，请点击「刷新」从 iTop 获取" : "暂无本地拓扑数据"}
+          />
+        ) : (
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={{ itop: ItopNode, local: LocalNode }}
+            fitView
+            fitViewOptions={{ padding: 0.3 }}
+            attributionPosition="bottom-left"
+          >
+            <Background color="#e8e8e8" gap={20} />
+            <Controls />
+          </ReactFlow>
+        )}
+      </div>
+
+      {/* ── legend bar (fixed height) ── */}
+      {useItop && hasData && (
+        <div style={{
+          flex: "0 0 auto",
+          marginTop: 8,
+          padding: "4px 12px",
+          border: "1px solid #f0f0f0",
+          borderRadius: 6,
+          background: "#fff",
+          overflow: "hidden",
+        }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>图例：</Text>
+          <Space wrap size={[4, 0]} style={{ marginLeft: 4 }}>
+            {Object.entries(typeColor).map(([k, v]) => (
+              <Tag key={k} color={v} style={{ fontSize: 11, margin: 0 }}>{k}</Tag>
+            ))}
+          </Space>
+        </div>
+      )}
+    </div>
   );
 }

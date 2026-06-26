@@ -56,6 +56,9 @@ export const apmApi = {
   getTopology: () => client.get("/apm/topology"),
   addEdge: (data: any) => client.post("/apm/topology/edges", data),
   getCrossLayer: (serviceId: string) => client.get(`/apm/cross-layer/${serviceId}`),
+  // iTop dependency graph
+  refreshTopology: () => client.post("/apm/topology/refresh"),
+  getAppTopology: (appName: string) => client.get(`/apm/topology/app/${encodeURIComponent(appName)}`),
 };
 
 // M7: Knowledge
