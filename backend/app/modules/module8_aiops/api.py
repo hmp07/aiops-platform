@@ -56,7 +56,7 @@ async def knowledge_graph(
     limit: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
 ):
-    """Build and return the knowledge graph."""
+    """Build and return the knowledge graph (read-only, scoped to platform data)."""
     return await build_knowledge_graph(
         environment=environment,
         system=system,
