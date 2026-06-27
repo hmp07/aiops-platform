@@ -454,7 +454,7 @@ async def audit_sessions(
 
 
 @router.delete("/audit/sessions/{session_id}")
-@require_permission("ai:audit:view")
+@require_permission("ai:audit:manage")
 async def delete_audit_session(session_id: str, current_user: dict = Depends(get_current_user)):
     """Delete an audit session."""
     async with async_session_factory() as db:
@@ -466,7 +466,7 @@ async def delete_audit_session(session_id: str, current_user: dict = Depends(get
 
 
 @router.post("/audit/sessions/bulk-delete")
-@require_permission("ai:audit:view")
+@require_permission("ai:audit:manage")
 async def bulk_delete_audit_sessions(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Bulk delete audit sessions."""
     ids = body.get("session_ids", [])

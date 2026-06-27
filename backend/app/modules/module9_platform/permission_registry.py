@@ -100,6 +100,7 @@ PERMISSION_DEFINITIONS: dict[str, dict] = {
     "ai:action:confirm":     {"name": "确认待执行动作", "category": "ai", "sort": 10},
     "ai:knowledgegraph:view":{"name": "查看知识图谱", "category": "ai", "sort": 11},
     "ai:audit:view":         {"name": "查看 Agent 审计", "category": "ai", "sort": 12},
+    "ai:audit:manage":       {"name": "管理 Agent 审计", "category": "ai", "sort": 13},
 
     # ---- Module 10: EventWall ----
     "eventwall:event:list":    {"name": "查看事件列表", "category": "eventwall", "sort": 1},
