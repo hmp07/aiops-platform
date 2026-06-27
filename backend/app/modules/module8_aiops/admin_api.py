@@ -29,6 +29,19 @@ from app.modules.module8_aiops import services as aiops_services
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/aiops/admin", tags=["AIOps Admin"])
 
+_SENSITIVE_AUTH_KEYS = {"password", "token", "secret", "api_key", "bearer", "api_key_encrypted",
+                          "service_account_token", "access_key", "secret_key"}
+
+
+def _sanitize_auth_config(auth_config: dict | None) -> dict:
+    """Strip sensitive values from auth_config before returning to clients."""
+    if not isinstance(auth_config, dict):
+        return {}
+    return {
+        k: ("***" if k.lower() in _SENSITIVE_AUTH_KEYS or any(s in k.lower() for s in ("token", "secret", "password", "key")) else v)
+        for k, v in auth_config.items()
+    }
+
 
 # ═══════════════════════════════════════════════════════════════
 # Agent Config
@@ -166,7 +179,8 @@ async def list_mcp_servers(current_user: dict = Depends(get_current_user)):
         return {"items": [
             {
                 "id": str(r.id), "name": r.name, "server_type": r.server_type,
-                "endpoint_or_command": r.endpoint_or_command, "auth_config": r.auth_config,
+                "endpoint_or_command": r.endpoint_or_command,
+                "auth_config": _sanitize_auth_config(r.auth_config),
                 "tool_whitelist": r.tool_whitelist, "is_enabled": r.is_enabled,
                 "created_at": r.created_at.isoformat(),
             }
