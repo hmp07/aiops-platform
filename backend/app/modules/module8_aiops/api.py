@@ -297,7 +297,7 @@ async def cancel_action(action_id: str, current_user: dict = Depends(get_current
 # ============================================================
 
 @router.get("/admin/providers")
-@require_permission("aiops:provider:list")
+@require_permission("ai:provider:manage")
 async def list_providers(current_user: dict = Depends(get_current_user)):
     async with async_session_factory() as db:
         rows = (await db.execute(select(AIOpsModelProvider).order_by(AIOpsModelProvider.created_at.desc()))).scalars().all()
@@ -310,7 +310,7 @@ async def list_providers(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/admin/providers", status_code=201)
-@require_permission("aiops:provider:create")
+@require_permission("ai:provider:manage")
 async def create_provider(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     from app.modules.module8_ai.llm.providers import PROVIDER_PRESETS
     from urllib.parse import urlparse
@@ -351,7 +351,7 @@ async def create_provider(body: dict = Body(...), current_user: dict = Depends(g
 # ============================================================
 
 @router.get("/admin/skills")
-@require_permission("aiops:skill:list")
+@require_permission("ai:skill:manage")
 async def list_skills(current_user: dict = Depends(get_current_user)):
     async with async_session_factory() as db:
         rows = (await db.execute(select(AIOpsSkill).where(AIOpsSkill.is_enabled == True))).scalars().all()

@@ -68,7 +68,7 @@ async def get_agent_config(current_user: dict = Depends(get_current_user)):
 
 
 @router.put("/config")
-@require_permission("aiops:config:manage")
+@require_permission("ai:provider:manage")
 async def update_agent_config(
     body: dict = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -113,7 +113,7 @@ async def list_provider_presets(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/providers/{provider_id}/test_connection")
-@require_permission("aiops:provider:create")
+@require_permission("ai:provider:manage")
 async def test_provider_connection(
     provider_id: str,
     current_user: dict = Depends(get_current_user),
@@ -139,7 +139,7 @@ async def test_provider_connection(
 
 
 @router.get("/providers/{provider_id}/models")
-@require_permission("aiops:provider:list")
+@require_permission("ai:provider:manage")
 async def list_provider_models(
     provider_id: str,
     current_user: dict = Depends(get_current_user),
@@ -169,7 +169,7 @@ async def list_provider_models(
 # ═══════════════════════════════════════════════════════════════
 
 @router.get("/mcp-servers")
-@require_permission("aiops:config:view")
+@require_permission("ai:analysis:view")
 async def list_mcp_servers(current_user: dict = Depends(get_current_user)):
     """List all MCP servers."""
     async with async_session_factory() as db:
@@ -189,7 +189,7 @@ async def list_mcp_servers(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/mcp-servers", status_code=201)
-@require_permission("aiops:config:manage")
+@require_permission("ai:provider:manage")
 async def create_mcp_server(
     body: dict = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -211,7 +211,7 @@ async def create_mcp_server(
 
 
 @router.patch("/mcp-servers/{server_id}")
-@require_permission("aiops:config:manage")
+@require_permission("ai:provider:manage")
 async def update_mcp_server(
     server_id: str,
     body: dict = Body(...),
@@ -231,7 +231,7 @@ async def update_mcp_server(
 
 
 @router.delete("/mcp-servers/{server_id}")
-@require_permission("aiops:config:manage")
+@require_permission("ai:provider:manage")
 async def delete_mcp_server(
     server_id: str,
     current_user: dict = Depends(get_current_user),
@@ -246,14 +246,14 @@ async def delete_mcp_server(
 
 
 @router.post("/mcp-servers/{server_id}/test_connection")
-@require_permission("aiops:config:manage")
+@require_permission("ai:provider:manage")
 async def test_mcp_server(server_id: str, current_user: dict = Depends(get_current_user)):
     """Test connection to an external MCP server."""
     return {"status": "ok", "message": "MCP server connection test (not implemented for external servers yet)"}
 
 
 @router.get("/mcp-servers/{server_id}/list_tools")
-@require_permission("aiops:config:view")
+@require_permission("ai:analysis:view")
 async def list_mcp_server_tools(server_id: str, current_user: dict = Depends(get_current_user)):
     """List tools from an MCP server (builtin platform tools)."""
     tools = aiops_services.list_platform_mcp_tools(current_user)
@@ -265,7 +265,7 @@ async def list_mcp_server_tools(server_id: str, current_user: dict = Depends(get
 # ═══════════════════════════════════════════════════════════════
 
 @router.get("/skills")
-@require_permission("aiops:skill:list")
+@require_permission("ai:skill:manage")
 async def list_skills(current_user: dict = Depends(get_current_user)):
     """List all skills."""
     async with async_session_factory() as db:
@@ -286,7 +286,7 @@ async def list_skills(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/skills", status_code=201)
-@require_permission("aiops:skill:create")
+@require_permission("ai:skill:manage")
 async def create_skill(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Create a new skill."""
     async with async_session_factory() as db:
@@ -311,7 +311,7 @@ async def create_skill(body: dict = Body(...), current_user: dict = Depends(get_
 
 
 @router.patch("/skills/{skill_id}")
-@require_permission("aiops:skill:create")
+@require_permission("ai:skill:manage")
 async def update_skill(skill_id: str, body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Update a skill."""
     async with async_session_factory() as db:
@@ -329,7 +329,7 @@ async def update_skill(skill_id: str, body: dict = Body(...), current_user: dict
 
 
 @router.delete("/skills/{skill_id}")
-@require_permission("aiops:skill:create")
+@require_permission("ai:skill:manage")
 async def delete_skill(skill_id: str, current_user: dict = Depends(get_current_user)):
     """Delete a skill."""
     async with async_session_factory() as db:
@@ -341,7 +341,7 @@ async def delete_skill(skill_id: str, current_user: dict = Depends(get_current_u
 
 
 @router.get("/skills/marketplace")
-@require_permission("aiops:skill:list")
+@require_permission("ai:skill:manage")
 async def skill_marketplace(current_user: dict = Depends(get_current_user)):
     """Browse skill marketplace (builtin skills catalog)."""
     return {"categories": [
@@ -352,7 +352,7 @@ async def skill_marketplace(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/skills/{skill_id}/clone")
-@require_permission("aiops:skill:create")
+@require_permission("ai:skill:manage")
 async def clone_skill(skill_id: str, body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Clone a skill for team customization."""
     async with async_session_factory() as db:
@@ -413,21 +413,21 @@ async def action_preflight(body: dict = Body(...), current_user: dict = Depends(
 # ═══════════════════════════════════════════════════════════════
 
 @router.get("/audit/overview")
-@require_permission("aiops:audit:view")
+@require_permission("ai:audit:view")
 async def audit_overview(current_user: dict = Depends(get_current_user)):
     """Audit dashboard overview."""
     return await aiops_services.get_audit_overview()
 
 
 @router.get("/audit/costs")
-@require_permission("aiops:audit:view")
+@require_permission("ai:audit:view")
 async def audit_costs(current_user: dict = Depends(get_current_user)):
     """Model cost breakdown."""
     return await aiops_services.get_audit_costs()
 
 
 @router.get("/audit/sessions")
-@require_permission("aiops:audit:view")
+@require_permission("ai:audit:view")
 async def audit_sessions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -454,7 +454,7 @@ async def audit_sessions(
 
 
 @router.delete("/audit/sessions/{session_id}")
-@require_permission("aiops:audit:manage")
+@require_permission("ai:audit:view")
 async def delete_audit_session(session_id: str, current_user: dict = Depends(get_current_user)):
     """Delete an audit session."""
     async with async_session_factory() as db:
@@ -466,7 +466,7 @@ async def delete_audit_session(session_id: str, current_user: dict = Depends(get
 
 
 @router.post("/audit/sessions/bulk-delete")
-@require_permission("aiops:audit:manage")
+@require_permission("ai:audit:view")
 async def bulk_delete_audit_sessions(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Bulk delete audit sessions."""
     ids = body.get("session_ids", [])
@@ -480,7 +480,7 @@ async def bulk_delete_audit_sessions(body: dict = Body(...), current_user: dict 
 
 
 @router.get("/audit/tool-invocations")
-@require_permission("aiops:audit:view")
+@require_permission("ai:audit:view")
 async def audit_tool_invocations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -507,7 +507,7 @@ async def audit_tool_invocations(
 
 
 @router.get("/audit/model-invocations")
-@require_permission("aiops:audit:view")
+@require_permission("ai:audit:view")
 async def audit_model_invocations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -535,7 +535,7 @@ async def audit_model_invocations(
 
 
 @router.get("/audit/actions")
-@require_permission("aiops:audit:view")
+@require_permission("ai:audit:view")
 async def audit_actions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
