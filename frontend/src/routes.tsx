@@ -15,6 +15,8 @@ import KnowledgePage from "./pages/knowledge/KnowledgePage";
 import AIChatPage from "./pages/ai/AIChatPage";
 import InspectionPage from "./pages/ai/InspectionPage";
 import ModelProviderPage from "./pages/ai/ModelProviderPage";
+import AIOpsConfigPage from "./pages/ai/AIOpsConfigPage";
+import AIOpsAuditPage from "./pages/ai/AIOpsAuditPage";
 import UserManagementPage from "./pages/platform/UserManagementPage";
 import AuditLogPage from "./pages/platform/AuditLogPage";
 import DataSourcePage from "./pages/platform/DataSourcePage";
@@ -40,6 +42,8 @@ export const routes: RouteObject[] = [
       { path: "ai/chat", element: <AIChatPage /> },
       { path: "ai/inspection", element: <InspectionPage /> },
       { path: "ai/models", element: <ModelProviderPage /> },
+      { path: "ai/config", element: <AIOpsConfigPage /> },
+      { path: "ai/audit", element: <AIOpsAuditPage /> },
       { path: "admin/users", element: <UserManagementPage /> },
       { path: "admin/datasources", element: <DataSourcePage /> },
       { path: "admin/audit", element: <AuditLogPage /> },

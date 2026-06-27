@@ -84,6 +84,8 @@ const menuItems = [
     label: "AI 运维",
     children: [
       { key: "/ai/chat", label: "AI 问答" },
+      { key: "/ai/config", label: "智能体配置" },
+      { key: "/ai/audit", label: "审计日志" },
       { key: "/ai/inspection", label: "巡检报告" },
       { key: "/ai/models", label: "模型配置" },
     ],
