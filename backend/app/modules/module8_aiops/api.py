@@ -22,6 +22,7 @@ from app.modules.module8_aiops.models import (
     AIOpsToolInvocation, AIOpsModelInvocation,
 )
 from app.modules.module8_aiops import services as aiops_services
+from app.modules.module8_aiops.knowledge_graph import build_knowledge_graph
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/aiops", tags=["AIOps"])
@@ -41,6 +42,27 @@ async def get_bootstrap(current_user: dict = Depends(get_current_user)):
     """Return agent config, suggested questions, permissions (sxdevops pattern)."""
     async with async_session_factory() as db:
         return await aiops_services.bootstrap_payload_for_user(db, current_user)
+
+
+# ============================================================
+# Knowledge Graph
+# ============================================================
+
+@router.get("/knowledge-graph")
+async def knowledge_graph(
+    environment: str = Query(""),
+    system: str = Query(""),
+    service: str = Query(""),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    """Build and return the knowledge graph."""
+    return await build_knowledge_graph(
+        environment=environment,
+        system=system,
+        service=service,
+        limit=limit,
+    )
 
 
 # ============================================================
