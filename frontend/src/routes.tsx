@@ -41,7 +41,6 @@ export const routes: RouteObject[] = [
       { path: "knowledge", element: <KnowledgePage /> },
       { path: "ai/chat", element: <AIChatPage /> },
       { path: "ai/inspection", element: <InspectionPage /> },
-      { path: "ai/models", element: <ModelProviderPage /> },
       { path: "ai/config", element: <AIOpsConfigPage /> },
       { path: "ai/audit", element: <AIOpsAuditPage /> },
       { path: "admin/users", element: <UserManagementPage /> },

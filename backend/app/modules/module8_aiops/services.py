@@ -421,6 +421,10 @@ def _register_builtin_mcp_tools():
         TOOL_DEFINITION as LOGS_TOOL,
         execute as execute_query_logs,
     )
+    from app.modules.module8_aiops.tools.builtin.query_events import (
+        TOOL_DEFINITION as EVENTS_TOOL,
+        execute as execute_query_events,
+    )
 
     builtins = [
         (DEVICE_TOOL, execute_query_devices),
@@ -429,6 +433,7 @@ def _register_builtin_mcp_tools():
         (IPAM_TOOL, execute_query_ipam),
         (TOPOLOGY_TOOL, execute_query_topology),
         (LOGS_TOOL, execute_query_logs),
+        (EVENTS_TOOL, execute_query_events),
     ]
 
     for tool_def, handler in builtins:

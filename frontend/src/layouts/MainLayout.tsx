@@ -87,7 +87,6 @@ const menuItems = [
       { key: "/ai/config", label: "智能体配置" },
       { key: "/ai/audit", label: "审计日志" },
       { key: "/ai/inspection", label: "巡检报告" },
-      { key: "/ai/models", label: "模型配置" },
     ],
   },
   {
