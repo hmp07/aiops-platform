@@ -193,82 +193,192 @@ async def bootstrap_payload_for_user(db: AsyncSession, user: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Action Registry
+# Action Registry (sxdevops: BUILTIN_ACTION_REGISTRY pattern)
 # ═══════════════════════════════════════════════════════════════
 
+# Agent mode constants
+AGENT_MODE_DIRECT = "direct"
+AGENT_MODE_REACT = "react"
+AGENT_MODE_PLAN_REACT = "plan_react"
 
-def list_action_registry(user: dict | None = None, include_unavailable: bool = True) -> list[dict]:
-    """Return the full action registry (sxdevops pattern).
+AGENT_MODE_LABELS = {
+    AGENT_MODE_DIRECT: "Direct",
+    AGENT_MODE_REACT: "ReAct",
+    AGENT_MODE_PLAN_REACT: "Plan+ReAct",
+}
 
-    Each action maps to a handler and describes what it does.
+# Risk level constants
+RISK_READ_ONLY = "read_only"
+RISK_DRAFT = "draft"
+RISK_WRITE = "write"
+RISK_EXECUTE = "execute"
+
+RISK_LEVEL_LABELS = {
+    RISK_READ_ONLY: "只读",
+    RISK_DRAFT: "草稿",
+    RISK_WRITE: "写入",
+    RISK_EXECUTE: "执行",
+}
+
+# ── Built-in Action Registry ─────────────────────────────────
+
+BUILTIN_ACTION_REGISTRY: list[dict] = [
+    {
+        "code": "device.query",
+        "display_name": "设备查询",
+        "category": "资产查询",
+        "risk_level": RISK_READ_ONLY,
+        "agent_mode": AGENT_MODE_DIRECT,
+        "required_context": [],
+        "allowed_tools": ["aiops.query_devices", "aiops.query_ipam"],
+        "skills": ["answer-formatter"],
+        "output_blocks": ["tool_trace"],
+        "preflight_required": False,
+        "description": "查询设备资产信息，包括设备类型、厂商、IP地址和状态。支持按设备类型、厂商、状态和关键字过滤。",
+        "permission": "asset:device:list",
+    },
+    {
+        "code": "alert.root_cause",
+        "display_name": "告警根因分析",
+        "category": "告警排障",
+        "risk_level": RISK_READ_ONLY,
+        "agent_mode": AGENT_MODE_PLAN_REACT,
+        "required_context": [],
+        "allowed_tools": [
+            "aiops.query_alerts", "aiops.query_devices",
+            "aiops.query_topology", "aiops.query_logs",
+        ],
+        "skills": ["alert-evidence-checklist", "answer-formatter"],
+        "output_blocks": ["incident_card", "evidence_timeline", "risk_notice"],
+        "preflight_required": False,
+        "description": "分析告警根因，结合设备信息、拓扑依赖和日志证据链给出可能原因和影响范围。",
+        "permission": "monitoring:alert:list",
+    },
+    {
+        "code": "log.analyze",
+        "display_name": "日志分析",
+        "category": "日志查询",
+        "risk_level": RISK_READ_ONLY,
+        "agent_mode": AGENT_MODE_REACT,
+        "required_context": [],
+        "allowed_tools": ["aiops.query_logs", "aiops.query_devices"],
+        "skills": ["log-pattern-analysis", "answer-formatter"],
+        "output_blocks": ["log_samples", "pattern_summary", "tool_trace"],
+        "preflight_required": False,
+        "description": "查询和分析日志条目，识别错误模式，关联设备和时间窗口。",
+        "permission": "log:entry:search",
+    },
+    {
+        "code": "topology.analyze",
+        "display_name": "拓扑分析",
+        "category": "服务拓扑",
+        "risk_level": RISK_READ_ONLY,
+        "agent_mode": AGENT_MODE_REACT,
+        "required_context": [],
+        "allowed_tools": ["aiops.query_topology", "aiops.query_devices", "aiops.query_itop_ci"],
+        "skills": ["topology-impact", "answer-formatter"],
+        "output_blocks": ["topology_graph", "impact_analysis", "tool_trace"],
+        "preflight_required": False,
+        "description": "分析服务拓扑和依赖关系图，评估变更影响范围和故障爆炸半径。",
+        "permission": "apm:topology:view",
+    },
+    {
+        "code": "config.review",
+        "display_name": "配置审查",
+        "category": "变更管理",
+        "risk_level": RISK_READ_ONLY,
+        "agent_mode": AGENT_MODE_DIRECT,
+        "required_context": ["device_id"],
+        "allowed_tools": ["aiops.query_config_diff", "aiops.query_devices"],
+        "skills": ["change-risk-assessment", "answer-formatter"],
+        "output_blocks": ["config_diff", "risk_notice", "tool_trace"],
+        "preflight_required": True,
+        "description": "审查设备配置变更差异，评估变更风险等级，提供回滚建议。",
+        "permission": "config:diff:view",
+    },
+    {
+        "code": "knowledge.search",
+        "display_name": "知识搜索",
+        "category": "知识库",
+        "risk_level": RISK_READ_ONLY,
+        "agent_mode": AGENT_MODE_DIRECT,
+        "required_context": [],
+        "allowed_tools": ["aiops.query_knowledge"],
+        "skills": ["answer-formatter"],
+        "output_blocks": ["tool_trace"],
+        "preflight_required": False,
+        "description": "搜索知识库中的文章、SOP和Runbook，获取运维经验和标准化流程。",
+        "permission": "knowledge:search:execute",
+    },
+]
+
+
+def list_action_registry(
+    user: dict | None = None,
+    include_unavailable: bool = True,
+) -> list[dict]:
+    """Build a rich action list from BUILTIN_ACTION_REGISTRY (sxdevops pattern).
+
+    Enriches each action with: available flag, human-readable labels, handler info.
     """
-    from app.modules.module8_aiops.action_handlers import HANDLERS, handler_for_action
+    from app.modules.module8_aiops.action_handlers import handler_for_action
 
     actions = []
-    for code, handler in HANDLERS.items():
-        h = handler_for_action(code)
-        actions.append({
-            "code": code,
-            "display_name": _action_display_name(code),
-            "page_prefixes": h.page_prefixes if h else [],
-            "keywords": h.keywords[:5] if h else [],
-            "agent_mode": "direct",
-            "agent_mode_display": "直接执行",
-            "risk_level": "read_only",
-            "risk_level_display": "只读",
-            "skills": [],
-            "enabled_tools": _action_default_tools(code),
-            "description": _action_description(code),
-        })
+    for item in BUILTIN_ACTION_REGISTRY:
+        entry = dict(item)
+        handler = handler_for_action(item["code"])
+        user_perms = user.get("permissions", []) if user else []
+
+        # Permission check
+        entry["available"] = (
+            not item["permission"]
+            or not user_perms
+            or item["permission"] in user_perms
+        )
+        entry["available_reason"] = (
+            "" if entry["available"]
+            else f"缺少权限：{item['permission']}"
+        )
+
+        # Human-readable labels
+        entry["agent_mode_display"] = AGENT_MODE_LABELS.get(
+            item["agent_mode"], item["agent_mode"]
+        )
+        entry["risk_level_display"] = RISK_LEVEL_LABELS.get(
+            item["risk_level"], item["risk_level"]
+        )
+
+        # Handler info
+        entry["page_prefixes"] = handler.page_prefixes if handler else []
+        entry["keywords"] = handler.keywords[:5] if handler else []
+
+        actions.append(entry)
+
+    if not include_unavailable:
+        actions = [a for a in actions if a["available"]]
+
     return actions
 
 
 def build_action_registry_summary(actions: list[dict] | None = None) -> dict:
-    """Aggregated summary of all actions."""
+    """Aggregated summary of all actions (sxdevops pattern)."""
     if actions is None:
         actions = list_action_registry()
+
+    available = [a for a in actions if a.get("available", True)]
+    by_risk = {}
+    for level in [RISK_READ_ONLY, RISK_DRAFT, RISK_WRITE, RISK_EXECUTE]:
+        count = len([a for a in actions if a.get("risk_level") == level])
+        if count > 0:
+            by_risk[level] = count
+
     return {
         "total": len(actions),
-        "by_risk": {
-            "read_only": len([a for a in actions if a.get("risk_level") == "read_only"]),
-        },
+        "available": len(available),
+        "unavailable": len(actions) - len(available),
+        "by_risk": by_risk,
+        "preflight_required": len([a for a in actions if a.get("preflight_required")]),
     }
-
-
-def _action_display_name(code: str) -> str:
-    names = {
-        "device.query": "设备查询",
-        "alert.root_cause": "告警根因分析",
-        "log.query": "日志查询",
-        "topology.analyze": "拓扑分析",
-        "knowledge.search": "知识搜索",
-        "config.review": "配置审查",
-    }
-    return names.get(code, code)
-
-
-def _action_default_tools(code: str) -> list[str]:
-    tools = {
-        "device.query": ["aiops.query_devices", "aiops.query_ipam"],
-        "alert.root_cause": ["aiops.query_alerts", "aiops.query_devices"],
-        "log.query": ["aiops.query_logs"],
-        "topology.analyze": ["aiops.query_topology", "aiops.query_devices"],
-        "knowledge.search": ["aiops.query_knowledge"],
-        "config.review": ["aiops.query_devices"],
-    }
-    return tools.get(code, [])
-
-
-def _action_description(code: str) -> str:
-    descriptions = {
-        "device.query": "查询设备资产信息，包括设备类型、厂商、IP地址和状态。",
-        "alert.root_cause": "分析告警根因，结合设备信息和告警历史给出可能原因。",
-        "log.query": "查询日志条目，支持按级别、来源和关键字过滤。",
-        "topology.analyze": "分析服务拓扑和依赖关系图。",
-        "knowledge.search": "搜索知识库中的文章、SOP和Runbook。",
-        "config.review": "审查设备配置变更和备份状态。",
-    }
-    return descriptions.get(code, "")
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -186,10 +186,10 @@ HANDLERS: Dict[str, ActionHandler] = {
         keywords=["告警", "根因", "原因", "影响", "处理", "异常", "alert", "报警"],
         prompt_hint="告警页面上下文优先作为告警ID、严重级别和时间范围的候选输入。",
     ),
-    "log.query": ActionHandler(
-        code="log.query",
+    "log.analyze": ActionHandler(
+        code="log.analyze",
         page_prefixes=["/log"],
-        keywords=["日志", "log", "error", "warn", "查询", "错误"],
+        keywords=["日志", "log", "error", "warn", "查询", "错误", "分析"],
         prompt_hint="日志页面上下文优先作为服务、数据源、日志级别和时间窗口的候选输入。",
     ),
     "topology.analyze": ActionHandler(
