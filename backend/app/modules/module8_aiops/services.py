@@ -329,16 +329,18 @@ def list_action_registry(
         handler = handler_for_action(item["code"])
         user_perms = user.get("permissions", []) if user else []
 
-        # Permission check
-        entry["available"] = (
-            not item["permission"]
-            or not user_perms
-            or item["permission"] in user_perms
-        )
-        entry["available_reason"] = (
-            "" if entry["available"]
-            else f"缺少权限：{item['permission']}"
-        )
+        # Permission check: deny if user has no permissions and action requires one
+        if not item["permission"]:
+            entry["available"] = True
+        elif not user or not user_perms:
+            entry["available"] = False
+            entry["available_reason"] = f"缺少权限：{item['permission']}"
+        else:
+            entry["available"] = item["permission"] in user_perms
+            entry["available_reason"] = (
+                "" if entry["available"]
+                else f"缺少权限：{item['permission']}"
+            )
 
         # Human-readable labels
         entry["agent_mode_display"] = AGENT_MODE_LABELS.get(
