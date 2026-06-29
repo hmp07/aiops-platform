@@ -35,7 +35,8 @@ export const getProviderPresets = () => client.get("/aiops/admin/providers/prese
 export const createProvider = (data: any) => client.post("/aiops/admin/providers", data);
 export const testProvider = (id: string) => client.post(`/aiops/admin/providers/${id}/test_connection`);
 export const listProviderModels = (id: string) => client.get(`/aiops/admin/providers/${id}/models`);
-export const deleteProvider = (id: string) => client.post(`/aiops/admin/providers/${id}/delete`);
+export const updateProvider = (id: string, data: any) => client.patch(`/aiops/admin/providers/${id}`, data);
+export const deleteProvider = (id: string) => client.delete(`/aiops/admin/providers/${id}`);
 
 // Admin: MCP Servers
 export const getMcpServers = () => client.get("/aiops/admin/mcp-servers");

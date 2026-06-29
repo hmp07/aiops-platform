@@ -313,23 +313,20 @@ async def list_providers(current_user: dict = Depends(get_current_user)):
 @require_permission("ai:provider:manage")
 async def create_provider(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     from app.modules.module8_ai.llm.providers import PROVIDER_PRESETS
-    from urllib.parse import urlparse
-    import ipaddress, socket
+    from app.modules.module8_aiops.admin_api import _validate_provider_url, _check_provider_name_unique
 
-    # SSRF guard: reject private/loopback URLs
+    # SSRF guard
     base_url = body.get("base_url", "")
-    host = urlparse(base_url).hostname
-    if host:
-        try:
-            for addr in socket.getaddrinfo(host, None):
-                ip = ipaddress.ip_address(addr[4][0])
-                if ip.is_loopback or ip.is_private or ip.is_link_local:
-                    return {"status": "error", "message": "Invalid or unsafe base_url"}
-        except socket.gaierror:
-            return {"status": "error", "message": "Cannot resolve base_url hostname"}
+    err = _validate_provider_url(base_url)
+    if err:
+        return {"status": "error", "message": err}
 
     preset = PROVIDER_PRESETS.get(body.get("provider_type", "openai_compatible"), {})
     async with async_session_factory() as db:
+        # Name uniqueness check
+        if not await _check_provider_name_unique(db, body["name"]):
+            return {"status": "error", "message": "Provider name already exists"}
+
         obj = AIOpsModelProvider(
             name=body["name"],
             provider_type=body.get("provider_type", "openai_compatible"),

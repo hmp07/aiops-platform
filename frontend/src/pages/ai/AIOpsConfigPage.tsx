@@ -197,6 +197,7 @@ function ModelTab() {
   const [presets, setPresets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<any>(null);
   const [form] = Form.useForm();
 
   const loadData = async () => {
@@ -205,32 +206,82 @@ function ModelTab() {
       const [pr, ps] = await Promise.all([aiopsApi.getProviders(), aiopsApi.getProviderPresets()]);
       setProviders(pr.data.items || []);
       setPresets(ps.data.presets || []);
-    } catch {}
+    } catch { message.error("加载提供商列表失败"); }
     setLoading(false);
   };
   useEffect(() => { loadData(); }, []);
 
-  const handleCreate = async (values: any) => {
+  const openCreateModal = () => {
+    setEditingProvider(null);
+    form.resetFields();
+    form.setFieldsValue({ provider_type: "openai_compatible" });
+    setModalOpen(true);
+  };
+
+  const openEditModal = (provider: any) => {
+    setEditingProvider(provider);
+    form.setFieldsValue({
+      name: provider.name,
+      provider_type: provider.provider_type,
+      base_url: provider.base_url,
+      default_model: provider.default_model,
+    });
+    setModalOpen(true);
+  };
+
+  const handleSubmit = async (values: any) => {
     try {
-      await aiopsApi.createProvider(values);
-      message.success("Provider 已创建");
-      setModalOpen(false); form.resetFields(); loadData();
-    } catch { message.error("创建失败"); }
+      if (editingProvider) {
+        await aiopsApi.updateProvider(editingProvider.id, values);
+        message.success("Provider 已更新");
+      } else {
+        await aiopsApi.createProvider(values);
+        message.success("Provider 已创建");
+      }
+      setModalOpen(false); setEditingProvider(null); form.resetFields();
+      await loadData();
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || (editingProvider ? "更新失败" : "创建失败");
+      message.error(msg);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await aiopsApi.deleteProvider(id);
+      message.success("已删除");
+      await loadData();
+    } catch (e: any) {
+      message.error(e?.response?.data?.message || "删除失败");
+    }
+  };
+
+  const handleTest = async (id: string) => {
+    try {
+      const r = await aiopsApi.testProvider(id);
+      const data = r.data;
+      if (data.status === "ok") {
+        message.success(data.message || "连接成功");
+      } else {
+        message.error(data.message || "连接失败");
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.message || e?.message || "测试请求失败");
+    }
   };
 
   const columns = [
     { title: "名称", dataIndex: "name", key: "name" },
-    { title: "类型", dataIndex: "provider_type", key: "type", width: 120, render: (v: string) => <Tag>{v}</Tag> },
-    { title: "模型", dataIndex: "default_model", key: "model" },
+    { title: "类型", dataIndex: "provider_type", key: "type", width: 100, render: (v: string) => <Tag>{v}</Tag> },
+    { title: "模型", dataIndex: "default_model", key: "model", ellipsis: true },
     { title: "启用", dataIndex: "is_enabled", key: "enabled", width: 60, render: (v: boolean) => v ? <Tag color="green">是</Tag> : <Tag>否</Tag> },
     {
-      title: "操作", key: "actions", width: 200,
+      title: "操作", key: "actions", width: 240,
       render: (_: any, r: any) => (
         <Space>
-          <Button size="small" onClick={async () => {
-            try { await aiopsApi.testProvider(r.id); message.success("连接成功"); } catch { message.error("连接失败"); }
-          }}>测试</Button>
-          <Popconfirm title="删除?" onConfirm={async () => { await aiopsApi.deleteProvider(r.id); loadData(); }}>
+          <Button size="small" onClick={() => handleTest(r.id)}>测试</Button>
+          <Button size="small" onClick={() => openEditModal(r)}>编辑</Button>
+          <Popconfirm title="确定删除?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger>删除</Button>
           </Popconfirm>
         </Space>
@@ -241,17 +292,17 @@ function ModelTab() {
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新建 Provider</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>新建 Provider</Button>
         <Button icon={<ReloadOutlined />} onClick={loadData}>刷新</Button>
       </Space>
 
-      {/* Preset cards */}
       {presets.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontWeight: "bold", marginBottom: 8 }}>预设模板（点击自动填充）</div>
           <Space wrap>
             {presets.map((p: any) => (
               <Button key={p.key} size="small" onClick={() => {
+                setEditingProvider(null);
                 form.setFieldsValue({
                   name: p.key, provider_type: p.key, base_url: p.base_url,
                   default_model: p.default_model, input_price: p.input_price,
@@ -266,9 +317,16 @@ function ModelTab() {
 
       <Table dataSource={providers} columns={columns} rowKey="id" loading={loading} size="small" pagination={false} />
 
-      <Modal title="新建 Model Provider" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()}>
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+      <Modal
+        title={editingProvider ? "编辑 Model Provider" : "新建 Model Provider"}
+        open={modalOpen}
+        onCancel={() => { setModalOpen(false); setEditingProvider(null); form.resetFields(); }}
+        onOk={() => form.submit()}
+      >
+        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}>
+            <Input />
+          </Form.Item>
           <Form.Item name="provider_type" label="类型" initialValue="openai_compatible">
             <Select options={[
               { value: "deepseek", label: "DeepSeek" }, { value: "zhipu", label: "智谱 GLM" },

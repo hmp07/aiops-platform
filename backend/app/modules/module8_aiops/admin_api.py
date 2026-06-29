@@ -100,6 +100,7 @@ async def update_agent_config(
 # ═══════════════════════════════════════════════════════════════
 
 @router.get("/providers/presets")
+@require_permission("ai:provider:manage")
 async def list_provider_presets(current_user: dict = Depends(get_current_user)):
     """List model provider presets (DeepSeek, GLM, Qwen, etc.)."""
     from app.modules.module8_aiops.llm.providers import PROVIDER_PRESETS
@@ -162,6 +163,94 @@ async def list_provider_models(
             return {"models": models}
         except Exception:
             return {"models": obj.models_list or []}
+
+
+def _validate_provider_url(base_url: str) -> str | None:
+    """SSRF guard: reject private/loopback/link-local URLs. Returns error message or None."""
+    from urllib.parse import urlparse
+    import ipaddress, socket
+    host = urlparse(base_url).hostname
+    if not host:
+        return "Invalid base_url: no hostname"
+    # Allow localhost for Ollama-like local providers
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return None
+    try:
+        for addr in socket.getaddrinfo(host, None):
+            ip = ipaddress.ip_address(addr[4][0])
+            if ip.is_loopback or ip.is_private or ip.is_link_local:
+                return f"Invalid or unsafe base_url: {host} resolves to private/loopback address"
+    except socket.gaierror:
+        return f"Cannot resolve base_url hostname: {host}"
+    return None
+
+
+async def _check_provider_name_unique(db, name: str, exclude_id: str | None = None) -> bool:
+    """Check if a provider name already exists (optionally excluding a given ID for updates)."""
+    from sqlalchemy import select as sa_select
+    q = sa_select(AIOpsModelProvider).where(AIOpsModelProvider.name == name)
+    if exclude_id:
+        q = q.where(AIOpsModelProvider.id != _uuid.UUID(exclude_id))
+    result = await db.execute(q)
+    return result.scalar_one_or_none() is None
+
+
+@router.delete("/providers/{provider_id}")
+@require_permission("ai:provider:manage")
+async def delete_provider(provider_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a model provider."""
+    async with async_session_factory() as db:
+        obj = await db.get(AIOpsModelProvider, _uuid.UUID(provider_id))
+        if not obj:
+            return {"status": "error", "message": "Provider not found"}
+        await db.delete(obj)
+        await db.commit()
+        return {"status": "deleted"}
+
+
+@router.patch("/providers/{provider_id}")
+@require_permission("ai:provider:manage")
+async def update_provider(
+    provider_id: str,
+    body: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Update a model provider."""
+    async with async_session_factory() as db:
+        obj = await db.get(AIOpsModelProvider, _uuid.UUID(provider_id))
+        if not obj:
+            return {"status": "error", "message": "Provider not found"}
+
+        # Name uniqueness check
+        if "name" in body and body["name"] != obj.name:
+            if not await _check_provider_name_unique(db, body["name"], provider_id):
+                return {"status": "error", "message": "Provider name already exists"}
+
+        # SSRF check if base_url changed
+        if "base_url" in body:
+            err = _validate_provider_url(body["base_url"])
+            if err:
+                return {"status": "error", "message": err}
+
+        updatable = [
+            "name", "provider_type", "base_url", "api_key_encrypted",
+            "default_model", "models_list", "input_price", "output_price",
+            "is_enabled",
+        ]
+        for key in updatable:
+            if key in body:
+                val = body[key]
+                if key in ("input_price", "output_price") and val is not None:
+                    val = float(val)
+                setattr(obj, key, val)
+
+        await db.commit()
+        await db.refresh(obj)
+        return {
+            "id": str(obj.id), "name": obj.name, "status": "updated",
+            "provider_type": obj.provider_type, "default_model": obj.default_model,
+            "is_enabled": obj.is_enabled,
+        }
 
 
 # ═══════════════════════════════════════════════════════════════
