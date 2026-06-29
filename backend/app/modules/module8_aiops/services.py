@@ -595,6 +595,172 @@ async def _request_model_completion(
 
 # ═══════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════
+# Builtin Skills Initialization
+# ═══════════════════════════════════════════════════════════════
+
+BUILTIN_SKILLS: list[dict] = [
+    {
+        "slug": "answer-formatter",
+        "name": "回答整形器",
+        "description": "基于工具事实重组最终回答，输出结构化结果。",
+        "category": "回答规范",
+        "applicable_actions": ["device.query", "alert.root_cause", "log.analyze", "topology.analyze", "config.review", "knowledge.search"],
+        "builtin_tools": [],
+        "recommended_tools": [],
+        "max_iterations": 0,
+        "risk_level": RISK_READ_ONLY,
+        "source_type": "inline",
+        "is_builtin": True,
+        "output_contract": {
+            "sections": ["结论", "依据", "建议操作"],
+            "blocks": ["tool_trace"],
+        },
+        "content": (
+            "适用场景：所有回答的格式化输出。\n"
+            "取证顺序：拿到工具结果后，优先整理为结论、依据、风险与建议。\n"
+            "要求：不能脱离工具事实自由发挥。如果工具没有返回证据，要明确说明证据不足。"
+            "对告警和故障类问题，要优先保留关键事实：对象、环境、时间窗口、状态、数量、证据来源。"
+        ),
+    },
+    {
+        "slug": "alert-evidence-checklist",
+        "name": "告警证据清单",
+        "description": "规范告警根因分析的证据收集顺序、判断口径和输出结构。",
+        "category": "告警排障",
+        "applicable_actions": ["alert.root_cause"],
+        "builtin_tools": ["aiops.query_alerts", "aiops.query_devices"],
+        "recommended_tools": ["aiops.query_topology", "aiops.query_logs"],
+        "max_iterations": 4,
+        "risk_level": RISK_READ_ONLY,
+        "source_type": "inline",
+        "is_builtin": True,
+        "output_contract": {
+            "sections": ["结论", "关键证据", "影响范围", "建议动作"],
+            "blocks": ["incident_card", "evidence_timeline", "risk_notice"],
+        },
+        "content": (
+            "适用场景：告警根因、告警风险、告警影响范围、告警是否需要升级等问题。"
+            "只负责分析和建议，不直接修改告警规则、不直接执行恢复动作。\n"
+            "取证顺序：1. 查询当前告警 2. 关联设备信息 3. 检查拓扑依赖 4. 关联日志证据。\n"
+            "判断要求：结论必须区分事实、推断和待验证假设。根因只能基于工具事实给出置信度。\n"
+            "输出要求：先给一句结论，再列关键证据、影响范围、建议动作。"
+            "建议动作只能是检查、确认、回滚评估或升级处理，不直接声称已经执行。"
+        ),
+    },
+    {
+        "slug": "log-pattern-analysis",
+        "name": "日志模式分析",
+        "description": "规范日志聚合、样本解释、错误模式归类和证据表达。",
+        "category": "日志查询",
+        "applicable_actions": ["log.analyze", "alert.root_cause"],
+        "builtin_tools": ["aiops.query_logs"],
+        "recommended_tools": ["aiops.query_devices"],
+        "max_iterations": 3,
+        "risk_level": RISK_READ_ONLY,
+        "source_type": "inline",
+        "is_builtin": True,
+        "output_contract": {
+            "sections": ["查询条件", "命中概览", "错误模式", "后续建议"],
+            "blocks": ["log_samples", "pattern_summary"],
+        },
+        "content": (
+            "适用场景：日志查询、日志聚合、日志异常模式解释、从日志补充故障证据。\n"
+            "查询规范：1. 按时间窗口过滤 2. 按服务/设备分组 3. 按错误级别排序。\n"
+            "聚合时优先按 level、service、hostname、error_code、message_pattern 分组。\n"
+            "输出要求：明确查询条件、命中概览、错误模式分类和后续建议。"
+        ),
+    },
+    {
+        "slug": "topology-impact",
+        "name": "拓扑影响分析",
+        "description": "分析服务拓扑和依赖关系，评估故障影响范围。",
+        "category": "拓扑分析",
+        "applicable_actions": ["topology.analyze", "alert.root_cause"],
+        "builtin_tools": ["aiops.query_topology"],
+        "recommended_tools": ["aiops.query_devices"],
+        "max_iterations": 3,
+        "risk_level": RISK_READ_ONLY,
+        "source_type": "inline",
+        "is_builtin": True,
+        "output_contract": {
+            "sections": ["拓扑概览", "关键依赖", "影响范围", "恢复优先级"],
+            "blocks": ["topology_graph", "impact_analysis"],
+        },
+        "content": (
+            "适用场景：服务拓扑和依赖关系分析、故障影响范围评估。\n"
+            "取证顺序：1. 查询服务拓扑 2. 识别关键依赖节点 3. 分析故障爆炸半径 4. 评估上下游影响。\n"
+            "输出要求：明确受影响的服务节点、依赖链路和恢复优先级。"
+        ),
+    },
+    {
+        "slug": "change-risk-assessment",
+        "name": "变更风险评估",
+        "description": "审查配置变更差异，评估风险等级并提供回滚建议。",
+        "category": "变更管理",
+        "applicable_actions": ["config.review"],
+        "builtin_tools": [],
+        "recommended_tools": ["aiops.query_devices"],
+        "max_iterations": 4,
+        "risk_level": RISK_READ_ONLY,
+        "source_type": "inline",
+        "is_builtin": True,
+        "output_contract": {
+            "sections": ["变更概述", "风险等级", "影响评估", "回滚建议"],
+            "blocks": ["config_diff", "risk_notice"],
+        },
+        "content": (
+            "适用场景：配置变更审查和风险评估。\n"
+            "取证顺序：1. 查询配置差异 2. 识别高危关键词（shutdown、delete、remove） 3. 评估影响范围。\n"
+            "判断要求：基于差异内容和风险模式给出等级评估（正常/可疑/高危），提供回滚建议。\n"
+            "输出要求：明确变更内容、风险等级、影响评估和回滚步骤。"
+        ),
+    },
+]
+
+
+async def _ensure_builtin_skills(db: AsyncSession):
+    """Sync BUILTIN_SKILLS to the database (idempotent, sxdevops pattern)."""
+    for skill_def in BUILTIN_SKILLS:
+        result = await db.execute(
+            select(AIOpsSkill).where(AIOpsSkill.slug == skill_def["slug"])
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Update content (SOP may have changed)
+            existing.content = skill_def["content"]
+            existing.description = skill_def["description"]
+            existing.output_contract = skill_def["output_contract"]
+            existing.builtin_tools = skill_def["builtin_tools"]
+            existing.recommended_tools = skill_def["recommended_tools"]
+            existing.applicable_actions = skill_def["applicable_actions"]
+            existing.max_iterations = skill_def["max_iterations"]
+            existing.risk_level = skill_def["risk_level"]
+            existing.is_enabled = True
+        else:
+            obj = AIOpsSkill(
+                slug=skill_def["slug"],
+                name=skill_def["name"],
+                description=skill_def["description"],
+                category=skill_def["category"],
+                content=skill_def["content"],
+                output_contract=skill_def["output_contract"],
+                builtin_tools=skill_def["builtin_tools"],
+                recommended_tools=skill_def["recommended_tools"],
+                applicable_actions=skill_def["applicable_actions"],
+                max_iterations=skill_def["max_iterations"],
+                risk_level=skill_def["risk_level"],
+                source_type=skill_def["source_type"],
+                is_builtin=skill_def["is_builtin"],
+                is_enabled=True,
+            )
+            db.add(obj)
+
+    await db.commit()
+    logger.info("Synced %d builtin skills to DB", len(BUILTIN_SKILLS))
+
+
+# ═══════════════════════════════════════════════════════════════
 # Runtime Prompt & Tool Registry
 # ═══════════════════════════════════════════════════════════════
 

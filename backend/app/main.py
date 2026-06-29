@@ -118,8 +118,12 @@ def _register_builtin_tools():
 
 
 async def _init_builtin_skills():
-    # Skills are managed via AIOpsSkill model in module8_aiops
-    logger.info("AIOps skills ready (managed via admin API)")
+    """Seed builtin skills to DB at startup (idempotent)."""
+    from app.modules.module8_aiops.services import _ensure_builtin_skills
+    from app.core.database.session import async_session_factory
+    async with async_session_factory() as db:
+        await _ensure_builtin_skills(db)
+    logger.info("AIOps builtin skills synced")
 
 
 # ---- Router Registration ----
