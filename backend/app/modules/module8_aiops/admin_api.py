@@ -172,9 +172,12 @@ def _validate_provider_url(base_url: str) -> str | None:
     host = urlparse(base_url).hostname
     if not host:
         return "Invalid base_url: no hostname"
-    # Allow localhost for Ollama-like local providers
+    # Allow localhost only on known-safe ports (Ollama: 11434, vLLM: 8000)
     if host in ("localhost", "127.0.0.1", "::1"):
-        return None
+        port = urlparse(base_url).port
+        if port in (None, 11434, 8000):
+            return None
+        return f"Localhost not allowed on port {port}. Allowed ports: 11434 (Ollama), 8000 (vLLM)"
     try:
         for addr in socket.getaddrinfo(host, None):
             ip = ipaddress.ip_address(addr[4][0])
