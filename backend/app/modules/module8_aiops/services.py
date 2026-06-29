@@ -732,14 +732,12 @@ async def _ensure_builtin_skills(db: AsyncSession):
         existing = result.scalar_one_or_none()
 
         if existing:
-            # Update content (SOP may have changed)
             existing.content = skill_def["content"]
             existing.description = skill_def["description"]
             existing.output_contract = skill_def["output_contract"]
             existing.builtin_tools = skill_def["builtin_tools"]
             existing.recommended_tools = skill_def["recommended_tools"]
             existing.applicable_actions = skill_def["applicable_actions"]
-            existing.max_iterations = skill_def["max_iterations"]
             existing.risk_level = skill_def["risk_level"]
             existing.is_enabled = True
         else:
@@ -753,7 +751,6 @@ async def _ensure_builtin_skills(db: AsyncSession):
                 builtin_tools=skill_def["builtin_tools"],
                 recommended_tools=skill_def["recommended_tools"],
                 applicable_actions=skill_def["applicable_actions"],
-                max_iterations=skill_def["max_iterations"],
                 risk_level=skill_def["risk_level"],
                 source_type=skill_def["source_type"],
                 is_builtin=skill_def["is_builtin"],
