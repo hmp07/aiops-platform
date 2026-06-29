@@ -592,216 +592,646 @@ async def _request_model_completion(
 
 
 # ═══════════════════════════════════════════════════════════════
-# Chat Planning & Dispatch
+# ═══════════════════════════════════════════════════════════════
+# Runtime Prompt & Tool Registry
 # ═══════════════════════════════════════════════════════════════
 
-async def _llm_chat_planning(
-    user_input: str,
-    user: dict,
-    session_id: str = "",
-) -> dict:
-    """Use LLM to plan the response — select tools, analyze intent.
+DEFAULT_RUNTIME_PROMPT = (
+    "你是 AIOps 平台内的智能运维助手。"
+    "必须优先通过可用的 MCP 工具获取平台内结构化数据，严禁编造不存在的资源、告警、日志和执行结果。"
+    "回答时区分事实、推断和建议；涉及执行类动作时，未确认前只能生成草稿。"
+)
 
-    Returns a dict with:
-        intent: "tool_call" | "chat"
-        tool_name: selected tool name (if tool_call)
-        tool_args: arguments for the tool
-        direct_answer: fallback answer if no tool needed
+
+def _build_runtime_prompt(
+    config: AIOpsAgentConfig | None = None,
+    action: dict | None = None,
+) -> str:
+    """Build the system prompt with tool schemas, skill SOP, and action context.
+
+    This is the Phase 1 prompt — focused on tool selection and fact-finding.
     """
-    system_prompt = (
-        "You are an AIOps intelligent assistant. Your job is to analyze the user's "
-        "question and decide whether to call a platform tool or answer directly.\n\n"
-        "Rules:\n"
-        "1. If the question asks about devices, alerts, logs, IP addresses, subnets, "
-        "topology, services, or knowledge articles, you MUST call the appropriate tool.\n"
-        "2. If the question is a simple greeting or general inquiry, answer directly.\n"
-        "3. Never make up data — always use tools for factual queries.\n"
-        "4. Use Chinese when the user uses Chinese."
-    )
+    parts = [config.system_prompt if (config and config.system_prompt) else DEFAULT_RUNTIME_PROMPT]
 
-    tool_defs = build_mcp_tool_definitions()
+    # Add available MCP tools summary
+    from app.modules.module8_aiops.tools.registry import ToolRegistry
+    tool_names = [t["name"] for t in ToolRegistry.list_all()]
+    if tool_names:
+        parts.append(f"\n可用平台工具: {', '.join(tool_names)}")
 
-    # If no tools registered, fall through to direct chat
-    if not tool_defs:
-        return {"intent": "chat", "direct_answer": None}
+    # Add action context if matched
+    if action:
+        parts.append(f"\n当前 Action: {action.get('display_name') or action.get('code')}")
+        parts.append(f"Agent 模式: {action.get('agent_mode_display', action.get('agent_mode', 'direct'))}")
+        parts.append(f"可用工具: {', '.join(action.get('allowed_tools', []))}")
+        if action.get("description"):
+            parts.append(f"Action 描述: {action['description']}")
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_input},
-    ]
+    # Add Skill SOP content for matched skills
+    # (Skills will be loaded from DB in P3; for now, inject builtin content)
+    skill_slugs = action.get("skills", []) if action else []
+    if skill_slugs:
+        parts.append("\n适用 Skill 的 SOP 指引:")
+        for slug in skill_slugs:
+            sop = _get_skill_sop_content(slug)
+            if sop:
+                parts.append(f"\n--- Skill: {slug} ---\n{sop}")
 
-    result = await _request_model_completion(messages=messages, tools=tool_defs)
+    # Constraints
+    parts.append("\n约束:")
+    parts.append("- 必须通过工具获取数据，不得编造")
+    parts.append("- 使用中文回答")
+    parts.append("- 区分事实与推断")
+    if action and action.get("risk_level") != RISK_READ_ONLY:
+        parts.append("- 高风险操作仅生成草稿，需用户确认后执行")
 
-    if result.get("error"):
-        return {"intent": "chat", "direct_answer": None}
+    return "\n".join(parts)
 
-    tool_calls = result.get("tool_calls")
-    if tool_calls and len(tool_calls) > 0:
-        tc = tool_calls[0]
-        tool_name = tc.get("name", "")
-        try:
-            import json
-            tool_args = json.loads(tc.get("arguments", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            tool_args = {"query": user_input}
 
-        return {
-            "intent": "tool_call",
-            "tool_name": tool_name,
-            "tool_args": tool_args,
-            "direct_answer": None,
-        }
-
-    # No tool call — LLM chose to answer directly
-    return {
-        "intent": "chat",
-        "direct_answer": result.get("content") or None,
+def _get_skill_sop_content(slug: str) -> str:
+    """Get SOP content for a builtin skill slug (will be DB-backed in P3)."""
+    sops = {
+        "answer-formatter": (
+            "适用场景：所有回答的格式化输出。\n"
+            "输出要求：先给结论，再列依据，最后给出建议操作。"
+            "使用结构化格式：结论/依据/建议操作。不能脱离工具事实自由发挥。"
+        ),
+        "alert-evidence-checklist": (
+            "适用场景：告警根因、告警风险、告警影响范围分析。\n"
+            "取证顺序：1. 查询告警详情 2. 关联设备信息 3. 检查拓扑依赖 4. 关联日志证据。\n"
+            "判断要求：结论必须区分事实、推断和待验证假设。根因只能基于工具事实给出置信度。"
+        ),
+        "log-pattern-analysis": (
+            "适用场景：日志查询、日志聚合、日志异常模式解释。\n"
+            "查询规范：1. 按时间窗口过滤 2. 按服务/设备分组 3. 按错误级别排序。\n"
+            "输出要求：明确查询条件、命中概览、错误模式分类和后续建议。"
+        ),
+        "topology-impact": (
+            "适用场景：服务拓扑和依赖关系分析、故障影响范围评估。\n"
+            "取证顺序：1. 查询服务拓扑 2. 识别关键依赖 3. 分析故障爆炸半径。\n"
+            "输出要求：明确受影响的服务节点、依赖链路和恢复优先级。"
+        ),
+        "change-risk-assessment": (
+            "适用场景：配置变更审查和风险评估。\n"
+            "取证顺序：1. 查询配置差异 2. 识别高危关键词 3. 评估影响范围。\n"
+            "判断要求：基于差异内容和风险模式给出等级评估，提供回滚建议。"
+        ),
     }
+    return sops.get(slug, "")
 
 
-async def dispatch_chat(
+def _build_runtime_tool_registry() -> tuple[list[dict], dict]:
+    """Build LLM-facing tool definitions and a handler lookup map.
+
+    Returns:
+        (tools_list, handler_map)
+        tools_list: OpenAI function-calling format tool definitions
+        handler_map: {tool_name: handler_name} for dispatch
+    """
+    from app.modules.module8_aiops.tools.registry import ToolRegistry
+
+    tools = []
+    handler_map = {}
+
+    for spec_dict in ToolRegistry.list_all():
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": spec_dict["name"],
+                "description": spec_dict.get("description", ""),
+                "parameters": spec_dict.get("inputSchema", {"type": "object", "properties": {}}),
+            },
+        })
+        handler_map[spec_dict["name"]] = spec_dict["name"]
+
+    return tools, handler_map
+
+
+# ═══════════════════════════════════════════════════════════════
+# Agent Mode Execution Strategies
+# ═══════════════════════════════════════════════════════════════
+
+async def _execute_direct_mode(
     user_input: str,
     user: dict,
+    action: dict,
+    messages: list[dict],
+    tools: list[dict],
+    handler_map: dict,
     session_id: str = "",
+    max_iterations: int = 3,
 ) -> dict:
-    """Full chat dispatch pipeline (sxdevops pattern).
+    """Direct mode: single LLM call with tool results inline.
 
-    Flow: planning → tool execution → response formatting
-
-    Returns a dict with:
-        content: final Markdown-formatted answer
-        steps: list of processing steps
-        tool_events: list of tool invocation summaries
-        total_tokens: total LLM tokens used
-        total_cost: estimated cost
-        pending_action: any action requiring confirmation
+    For simple queries where one tool call should resolve the question.
     """
-    steps: list[dict] = []
-    tool_events: list[dict] = []
+    tool_results = []
+    tool_calls_made = []
+    sections = []
+    citations = []
     total_tokens = 0
     total_cost = 0.0
 
-    # Step 1: LLM Planning
-    steps.append({"title": "Analyzing intent", "status": "running"})
-    plan = await _llm_chat_planning(user_input, user, session_id)
-    steps[-1]["status"] = "completed"
+    for _round in range(max(1, max_iterations)):
+        result = await _request_model_completion(messages=messages, tools=tools)
 
-    intent = plan.get("intent", "chat")
+        if result.get("error"):
+            break
 
-    # Step 2: Execute tool if needed
-    tool_result = None
-    if intent == "tool_call":
-        tool_name = plan.get("tool_name", "")
-        tool_args = plan.get("tool_args", {})
-        steps.append({"title": f"Calling {tool_name}", "status": "running"})
+        total_tokens += result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
+        total_cost += result.get("estimated_cost", 0.0)
 
-        import time as _time
-        _t0 = _time.time()
-        try:
-            tool_result = await invoke_platform_mcp_tool(tool_name, tool_args, user)
-            _latency = int((_time.time() - _t0) * 1000)
-            found = tool_result.get("found", 0) if tool_result else 0
-            tool_events.append({
-                "name": tool_name,
-                "detail": f"Found {found} results",
-                "status": "success",
-            })
-            steps[-1]["status"] = "completed"
-            # Audit: record tool invocation
-            await record_tool_invocation(
-                session_id=session_id,
-                tool_name=tool_name,
-                input_params=tool_args,
-                output_summary=f"Found {found} results"[:500],
-                latency_ms=_latency,
-                status="success",
-            )
-        except Exception:
-            _latency = int((_time.time() - _t0) * 1000)
-            logger.exception("Tool %s failed in dispatch", tool_name)
-            tool_events.append({
-                "name": tool_name,
-                "detail": "Tool execution failed",
-                "status": "error",
-            })
-            steps[-1]["status"] = "failed"
-            tool_result = {"found": 0, "items": [], "error": "Tool execution failed"}
-            await record_tool_invocation(
-                session_id=session_id,
-                tool_name=tool_name,
-                input_params=tool_args,
-                output_summary="Tool execution failed",
-                latency_ms=_latency,
-                status="failed",
-            )
+        tc_list = result.get("tool_calls")
+        if not tc_list:
+            # LLM gave final answer
+            return {
+                "content": result.get("content", ""),
+                "sections": sections,
+                "citations": citations,
+                "tool_calls": tool_calls_made,
+                "tool_results": tool_results,
+                "total_tokens": total_tokens,
+                "total_cost": total_cost,
+            }
 
-    # Step 3: Format response
-    steps.append({"title": "Generating response", "status": "running"})
+        # Execute tools
+        for tc in tc_list:
+            tool_name = tc.get("name", "")
+            try:
+                args = json.loads(tc.get("arguments", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                args = {"query": user_input}
 
-    if intent == "chat" and plan.get("direct_answer"):
-        # LLM already gave a direct answer, use it
-        content = plan["direct_answer"]
-    elif tool_result:
-        # Format tool results
-        content = _format_tool_result_for_display(user_input, tool_result)
-    else:
-        # Fallback: ask LLM to format tool results or answer directly
-        content = _format_tool_result_for_display(user_input, tool_result or {"found": 0, "items": []})
+            import time as _time
+            _t0 = _time.time()
+            try:
+                tr = await invoke_platform_mcp_tool(tool_name, args, user)
+                _latency = int((_time.time() - _t0) * 1000)
+                tool_calls_made.append(tool_name)
+                tool_results.append({"tool": tool_name, "result": tr})
+                sections.append({
+                    "title": tool_name,
+                    "items": [f"Found {tr.get('found', 0)} results"],
+                })
+                await record_tool_invocation(
+                    session_id=session_id, tool_name=tool_name,
+                    input_params=args, latency_ms=_latency,
+                    output_summary=f"Found {tr.get('found', 0)} results",
+                    status="success",
+                )
+                # Append tool result to messages
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", f"call_{_round}"),
+                    "content": json.dumps(tr, ensure_ascii=False, default=str)[:2000],
+                })
+            except Exception:
+                logger.exception("Direct mode tool %s failed", tool_name)
 
-    steps[-1]["status"] = "completed"
-
+    # Format results if no final answer from LLM
     return {
-        "content": content,
-        "steps": steps,
-        "tool_events": tool_events,
-        "pending_action": None,
+        "content": "",
+        "sections": sections,
+        "citations": citations,
+        "tool_calls": tool_calls_made,
+        "tool_results": tool_results,
         "total_tokens": total_tokens,
         "total_cost": total_cost,
     }
 
 
-def _format_tool_result_for_display(user_input: str, tool_result: dict) -> str:
-    """Format tool results into a Markdown response string."""
-    if tool_result.get("error"):
-        return f"查询时遇到问题：{tool_result['error']}"
+async def _execute_react_mode(
+    user_input: str,
+    user: dict,
+    action: dict,
+    messages: list[dict],
+    tools: list[dict],
+    handler_map: dict,
+    session_id: str = "",
+    max_iterations: int = 5,
+) -> dict:
+    """ReAct mode: reasoning-action-observation loop.
 
-    found = tool_result.get("found", 0)
-    items = tool_result.get("items", [])
-    returned = tool_result.get("returned", len(items))
+    LLM iteratively calls tools, observes results, and decides next steps.
+    """
+    tool_results = []
+    tool_calls_made = []
+    sections = []
+    citations = []
+    total_tokens = 0
+    total_cost = 0.0
 
-    lines = [f"根据查询结果（共 {found} 条，显示前 {returned} 条）：\n"]
+    for round_idx in range(max_iterations):
+        result = await _request_model_completion(messages=messages, tools=tools)
 
-    for i, item in enumerate(items[:10], 1):
-        if "title" in item:
-            # Alert or article
-            severity = item.get("severity", "")
-            status = item.get("status", "")
-            tags = f" [{severity}]" if severity else ""
-            tags += f" ({status})" if status else ""
-            lines.append(f"{i}. **{item['title']}**{tags}")
-        elif "name" in item:
-            # Device or service
-            dev_type = item.get("type", "")
-            ip = item.get("ip", "")
-            info = f" ({dev_type})" if dev_type else ""
-            info += f" - IP: {ip}" if ip else ""
-            lines.append(f"{i}. **{item['name']}**{info}")
-        elif "cidr" in item:
-            # Subnet
-            used = item.get("used_ips", 0)
-            total = item.get("total_ips", 0)
-            lines.append(f"{i}. **{item['cidr']}** - {used}/{total} IPs used")
-        elif "message" in item:
-            # Log entry
-            sev = item.get("severity", "")
-            host = item.get("hostname", "")
-            msg = item.get("message", "")[:100]
-            lines.append(f"{i}. [{sev}] {host}: {msg}")
-        else:
-            # Generic
-            lines.append(f"{i}. {json.dumps(item, ensure_ascii=False, default=str)[:200]}")
+        if result.get("error"):
+            break
+
+        total_tokens += result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
+        total_cost += result.get("estimated_cost", 0.0)
+
+        tc_list = result.get("tool_calls")
+        if not tc_list:
+            return {
+                "content": result.get("content", ""),
+                "sections": sections,
+                "citations": citations,
+                "tool_calls": tool_calls_made,
+                "tool_results": tool_results,
+                "total_tokens": total_tokens,
+                "total_cost": total_cost,
+            }
+
+        # Append assistant message (with tool_calls) to history
+        assistant_msg = {"role": "assistant", "content": result.get("content") or ""}
+        if tc_list:
+            assistant_msg["tool_calls"] = tc_list
+        messages.append(assistant_msg)
+
+        for tc in tc_list:
+            tool_name = tc.get("name", "")
+            try:
+                args = json.loads(tc.get("arguments", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                args = {"query": user_input}
+
+            import time as _time
+            _t0 = _time.time()
+            try:
+                tr = await invoke_platform_mcp_tool(tool_name, args, user)
+                _latency = int((_time.time() - _t0) * 1000)
+                tool_calls_made.append(tool_name)
+                tool_results.append({"tool": tool_name, "result": tr})
+                found = tr.get("found", 0) if tr else 0
+                sections.append({"title": f"Round {round_idx+1}: {tool_name}", "items": [f"Found {found} results"]})
+                await record_tool_invocation(
+                    session_id=session_id, tool_name=tool_name,
+                    input_params=args, latency_ms=_latency,
+                    output_summary=f"Found {found} results", status="success",
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", f"call_{round_idx}"),
+                    "content": json.dumps(tr, ensure_ascii=False, default=str)[:2000],
+                })
+            except Exception:
+                logger.exception("ReAct tool %s failed in round %d", tool_name, round_idx)
+
+    # Max iterations reached — return collected results
+    return {
+        "content": "",
+        "sections": sections,
+        "citations": citations,
+        "tool_calls": tool_calls_made,
+        "tool_results": tool_results,
+        "total_tokens": total_tokens,
+        "total_cost": total_cost,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Main Dispatch Engine (sxdevops: _dispatch_with_tool_runtime)
+# ═══════════════════════════════════════════════════════════════
+
+async def _dispatch_with_tool_runtime(
+    user_input: str,
+    user: dict,
+    session_id: str = "",
+    page_context: dict | None = None,
+) -> dict:
+    """Phase 1: LLM tool planning + MCP execution.
+
+    sxdevops-style dispatch: action routing → preflight → tool registry → ReAct loop.
+    """
+    # Load config
+    async with async_session_factory() as db:
+        config = await get_agent_config(db)
+
+    # Select action
+    action = _select_action_for_question(user_input, page_context)
+
+    # Build tool registry
+    tools, handler_map = _build_runtime_tool_registry()
+
+    # Build system prompt
+    system_prompt = _build_runtime_prompt(config, action)
+
+    # Build messages
+    messages = [
+        {"role": "system", "content": system_prompt},
+    ]
+
+    # Add page context hints if available
+    if page_context:
+        from app.modules.module8_aiops.action_handlers import (
+            build_prompt_hint_lines, normalize_page_context,
+        )
+        ctx = normalize_page_context(page_context)
+        hint_lines = build_prompt_hint_lines(action, ctx)
+        if hint_lines:
+            messages.append({
+                "role": "system",
+                "content": "页面上下文提示:\n" + "\n".join(hint_lines),
+            })
+
+    messages.append({"role": "user", "content": user_input})
+
+    # Get agent mode and max iterations from action
+    agent_mode = action.get("agent_mode", AGENT_MODE_DIRECT) if action else AGENT_MODE_DIRECT
+    max_iterations = 5 if agent_mode == AGENT_MODE_PLAN_REACT else (3 if agent_mode == AGENT_MODE_REACT else 1)
+
+    # Execute based on agent mode
+    if agent_mode == AGENT_MODE_PLAN_REACT:
+        # Plan first, then ReAct
+        plan_result = await _request_model_completion(
+            messages=messages + [{
+                "role": "user",
+                "content": "请先制定分析计划（列出需要查询的步骤），然后逐步执行。",
+            }],
+            tools=tools,
+        )
+        if plan_result.get("content"):
+            messages.append({"role": "assistant", "content": f"分析计划: {plan_result['content']}"})
+
+        result = await _execute_react_mode(
+            user_input, user, action, messages, tools, handler_map,
+            session_id, max_iterations,
+        )
+    elif agent_mode == AGENT_MODE_REACT:
+        result = await _execute_react_mode(
+            user_input, user, action, messages, tools, handler_map,
+            session_id, max_iterations,
+        )
+    else:
+        result = await _execute_direct_mode(
+            user_input, user, action, messages, tools, handler_map,
+            session_id, max_iterations,
+        )
+
+    result["action"] = action
+    result["agent_mode"] = agent_mode
+    result["skill_trace"] = _build_skill_trace(action, result.get("tool_calls", []))
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 2: Answer Formatter + Code Fallback
+# ═══════════════════════════════════════════════════════════════
+
+def _build_fallback_answer(
+    user_input: str,
+    tool_results: list[dict],
+    action: dict | None = None,
+) -> str:
+    """Build a deterministic fallback answer from tool results.
+
+    This is the code fallback draft — always available, never hallucinates.
+    """
+    if not tool_results:
+        return "未能获取到平台数据，请确认数据源配置正确后重试。"
+
+    lines = ["## 查询结果\n"]
+    for tr in tool_results:
+        tool_name = tr.get("tool", "unknown")
+        result = tr.get("result", {})
+        found = result.get("found", 0)
+        items = result.get("items", [])
+
+        lines.append(f"### {tool_name}（共 {found} 条）\n")
+
+        for i, item in enumerate(items[:10], 1):
+            if "name" in item:
+                extra = f" ({item.get('type', '')})" if item.get("type") else ""
+                extra += f" - IP: {item.get('ip', '')}" if item.get("ip") else ""
+                lines.append(f"{i}. **{item['name']}**{extra}")
+            elif "title" in item:
+                sev = f" [{item.get('severity', '')}]" if item.get("severity") else ""
+                lines.append(f"{i}. **{item['title']}**{sev}")
+            elif "cidr" in item:
+                lines.append(f"{i}. **{item['cidr']}** - {item.get('used_ips', 0)}/{item.get('total_ips', 0)} IPs")
+            elif "message" in item:
+                lines.append(f"{i}. [{item.get('severity', '')}] {item.get('hostname', '')}: {item.get('message', '')[:100]}")
+            else:
+                lines.append(f"{i}. {json.dumps(item, ensure_ascii=False, default=str)[:200]}")
+
+    # Add structured sections if action has output_contract
+    if action and action.get("output_blocks"):
+        lines.append("\n---\n")
+        lines.append("**结论**：基于以上平台数据，请参考具体条目。\n")
+        lines.append("**依据**：以上数据均来自平台工具查询结果。\n")
+        lines.append("**建议操作**：如有异常项，建议进一步排查相关设备和告警。")
 
     return "\n".join(lines)
+
+
+async def _run_answer_formatter(
+    user_input: str,
+    dispatch_result: dict,
+    action: dict | None = None,
+) -> str:
+    """Phase 2: Format tool results into a structured answer.
+
+    Build code fallback, then optionally call LLM to format.
+    Falls back to code draft if LLM fails or returns empty/invalid.
+    """
+    tool_results = dispatch_result.get("tool_results", [])
+
+    # 1. Build code fallback (always available)
+    fallback = _build_fallback_answer(user_input, tool_results, action)
+
+    # 2. Try LLM formatting (if no tool results, just use fallback)
+    if not tool_results:
+        return fallback
+
+    # Build formatter messages
+    formatter_messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是 AIOps 答案整形器。根据工具查询结果整理结构化回答。\n"
+                "要求：\n"
+                "1. 仅使用工具返回的数据，不得编造\n"
+                "2. 使用「结论 / 依据 / 建议操作」结构\n"
+                "3. 明确指出证据不足的情况\n"
+                "4. 区分事实、推断和假设\n"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"用户问题: {user_input}\n\n"
+                f"工具结果:\n{json.dumps(tool_results, ensure_ascii=False, default=str)[:3000]}\n\n"
+                f"请基于以上工具结果，输出结构化的运维分析回答。"
+            ),
+        },
+    ]
+
+    try:
+        fmt_result = await _request_model_completion(messages=formatter_messages, tools=None)
+
+        content = (fmt_result.get("content") or "").strip()
+
+        # Quality gate
+        if not content or len(content) < 20:
+            logger.warning("Formatter returned empty/short content, using fallback")
+            return fallback
+
+        # Check for required sections
+        has_structure = any(
+            section in content
+            for section in ["结论", "依据", "建议", "##", "###"]
+        )
+        if not has_structure and len(tool_results) > 0:
+            # Append fallback sections
+            content = content + "\n\n---\n**数据依据**: " + fallback[:500]
+
+        return content
+
+    except Exception:
+        logger.exception("Answer formatter failed, using fallback")
+        return fallback
+
+
+def _build_skill_trace(
+    action: dict | None = None,
+    tool_calls: list[str] | None = None,
+) -> dict:
+    """Build skill trace for audit/observability."""
+    tool_calls = tool_calls or []
+    skill_slugs = action.get("skills", []) if action else []
+
+    items = []
+    for slug in skill_slugs:
+        status = "available"
+        if slug == "answer-formatter":
+            status = "called"
+        items.append({"slug": slug, "status": status})
+
+    return {
+        "enabled_count": len(skill_slugs),
+        "matched_count": len(skill_slugs),
+        "called_count": len([i for i in items if i["status"] == "called"]),
+        "items": items,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Action Selection (deterministic, pre-LLM)
+# ═══════════════════════════════════════════════════════════════
+
+def _select_action_for_question(
+    question: str,
+    page_context: dict | None = None,
+) -> dict | None:
+    """Select the best action based on question keywords + page context.
+
+    Deterministic routing — no LLM involved. Returns BUILTIN_ACTION_REGISTRY entry.
+    """
+    lowered = question.lower()
+
+    # Keyword → action code mapping
+    keyword_map = [
+        (["告警", "根因", "alert", "报警", "异常告警"], "alert.root_cause"),
+        (["日志", "log", "error", "warn"], "log.analyze"),
+        (["拓扑", "topology", "依赖", "dependency", "服务拓扑"], "topology.analyze"),
+        (["配置", "config", "变更", "备份", "版本差异"], "config.review"),
+        (["知识", "knowledge", "sop", "runbook", "文档", "预案"], "knowledge.search"),
+        (["设备", "device", "server", "服务器", "资产", "ip", "子网"], "device.query"),
+    ]
+
+    # First pass: check page context
+    if page_context:
+        from app.modules.module8_aiops.action_handlers import (
+            select_action_by_handler, normalize_page_context,
+        )
+        ctx = normalize_page_context(page_context)
+        actions_by_code = {a["code"]: a for a in BUILTIN_ACTION_REGISTRY}
+        handler_match = select_action_by_handler(question, actions_by_code, ctx)
+        if handler_match:
+            return handler_match
+
+    # Second pass: keyword matching
+    for keywords, action_code in keyword_map:
+        if any(kw in lowered for kw in keywords):
+            for action in BUILTIN_ACTION_REGISTRY:
+                if action["code"] == action_code:
+                    return dict(action)
+
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# Main dispatch_chat — full pipeline
+# ═══════════════════════════════════════════════════════════════
+
+async def dispatch_chat(
+    user_input: str,
+    user: dict,
+    session_id: str = "",
+    page_context: dict | None = None,
+) -> dict:
+    """Full chat dispatch pipeline (sxdevops dual-phase architecture).
+
+    Flow:
+    1. Action Router (deterministic) → action code
+    2. Phase 1: _dispatch_with_tool_runtime (LLM tool selection + MCP execution)
+    3. Phase 2: _run_answer_formatter (LLM answer formatting + code fallback)
+    4. Return: {content, steps, tool_events, citations, total_tokens, total_cost, pending_action}
+    """
+    steps: list[dict] = []
+    tool_events: list[dict] = []
+
+    # Step 1: Action routing
+    steps.append({"title": "Analyzing question", "status": "completed"})
+
+    # Step 2: Phase 1 — Tool dispatch
+    steps.append({"title": "Executing tools", "status": "running"})
+    try:
+        dispatch_result = await _dispatch_with_tool_runtime(
+            user_input, user, session_id, page_context,
+        )
+        steps[-1]["status"] = "completed"
+
+        # Collect tool events
+        for tr in dispatch_result.get("tool_results", []):
+            found = tr.get("result", {}).get("found", 0)
+            tool_events.append({
+                "name": tr.get("tool", "unknown"),
+                "detail": f"Found {found} results",
+                "status": "success",
+            })
+    except Exception:
+        logger.exception("Dispatch failed")
+        dispatch_result = {"content": "", "tool_results": [], "tool_calls": [], "sections": []}
+        steps[-1]["status"] = "failed"
+
+    # Step 3: Phase 2 — Answer formatting
+    steps.append({"title": "Formatting response", "status": "running"})
+    action = dispatch_result.get("action")
+    try:
+        content = await _run_answer_formatter(
+            user_input, dispatch_result, action,
+        )
+        steps[-1]["status"] = "completed"
+    except Exception:
+        logger.exception("Answer formatter failed")
+        content = _build_fallback_answer(
+            user_input,
+            dispatch_result.get("tool_results", []),
+            action,
+        )
+        steps[-1]["status"] = "completed"
+
+    return {
+        "content": content,
+        "steps": steps,
+        "tool_events": tool_events,
+        "citations": [],
+        "tool_calls": dispatch_result.get("tool_calls", []),
+        "pending_action": None,
+        "total_tokens": dispatch_result.get("total_tokens", 0),
+        "total_cost": dispatch_result.get("total_cost", 0.0),
+    }
 
 
 import json as _json
